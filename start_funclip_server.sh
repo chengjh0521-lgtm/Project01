@@ -9,5 +9,6 @@ export TEMP="$PWD/tmp"
 export TMPDIR="$PWD/tmp"
 export GRADIO_TEMP_DIR="$PWD/gradio_tmp"
 export IMAGEMAGICK_BINARY="${IMAGEMAGICK_BINARY:-$(command -v convert || command -v magick || true)}"
+export ASR_MODEL="${ASR_MODEL:-fun-asr-nano}"
 mkdir -p "$TMP" "$GRADIO_TEMP_DIR" output
-./funclip-env/bin/python funclip/launch.py -m paraformer -p "${PORT:-7860}" --listen
+./funclip-env/bin/python funclip/launch.py -m "$ASR_MODEL" -p "${PORT:-7860}" --listen
