@@ -8,12 +8,19 @@ import os
 import sys
 import copy
 import json
+import shutil
 import librosa
 import logging
 import argparse
 import subprocess
 import numpy as np
 import soundfile as sf
+
+if os.environ.get("IMAGEMAGICK_BINARY") in (None, "", "unset"):
+    imagemagick_binary = shutil.which("magick") or shutil.which("convert")
+    if imagemagick_binary:
+        os.environ["IMAGEMAGICK_BINARY"] = imagemagick_binary
+
 from moviepy.editor import *
 import moviepy.editor as mpy
 from moviepy.video.tools.subtitles import SubtitlesClip, TextClip

@@ -8,5 +8,6 @@ export TMP="$PWD/tmp"
 export TEMP="$PWD/tmp"
 export TMPDIR="$PWD/tmp"
 export GRADIO_TEMP_DIR="$PWD/gradio_tmp"
+export IMAGEMAGICK_BINARY="${IMAGEMAGICK_BINARY:-$(command -v convert || command -v magick || true)}"
 mkdir -p "$TMP" "$GRADIO_TEMP_DIR" output
 ./funclip-env/bin/python funclip/launch.py -m paraformer -p "${PORT:-7860}" --listen
