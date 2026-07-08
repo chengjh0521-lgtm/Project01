@@ -4,12 +4,16 @@
 #  MIT License  (https://opensource.org/licenses/MIT)
 
 from http import server
+import json
 import os
+import re
 import logging
 import argparse
 import tempfile
 from datetime import datetime
+from urllib.parse import unquote, urlparse
 import gradio as gr
+import requests
 from funasr import AutoModel
 from videoclipper import VideoClipper
 from llm.openai_api import openai_call
@@ -25,6 +29,7 @@ LOCAL_TMP_DIR = os.path.join(PROJECT_ROOT, "tmp")
 LOCAL_GRADIO_TMP_DIR = os.path.join(PROJECT_ROOT, "gradio_tmp")
 LOCAL_VIDEO_DIR = os.path.join(PROJECT_ROOT, "local_videos")
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
+USER_SETTINGS_PATH = os.path.join(PROJECT_ROOT, "user_settings.json")
 os.makedirs(LOCAL_TMP_DIR, exist_ok=True)
 os.makedirs(LOCAL_GRADIO_TMP_DIR, exist_ok=True)
 os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
@@ -34,6 +39,33 @@ os.environ.setdefault("TEMP", LOCAL_TMP_DIR)
 os.environ.setdefault("TMPDIR", LOCAL_TMP_DIR)
 os.environ.setdefault("GRADIO_TEMP_DIR", LOCAL_GRADIO_TMP_DIR)
 tempfile.tempdir = LOCAL_TMP_DIR
+
+
+DEFAULT_PROMPT_SYSTEM = (
+    "你是一个视频srt字幕分析剪辑器，输入视频的srt字幕，"
+    "分析其中的精彩且尽可能连续的片段并裁剪出来，输出四条以内的片段，将片段中在时间上连续的多个句子及它们的时间戳合并为一条，"
+    "注意确保文字与时间戳的正确匹配。输出需严格按照如下格式：1. [开始时间-结束时间] 文本，注意其中的连接符是“-”"
+)
+DEFAULT_PROMPT_USER = "这是待裁剪的视频srt字幕："
+DEFAULT_LLM_MODEL = "deepseek-v4-flash"
+
+
+def load_user_settings():
+    if not os.path.exists(USER_SETTINGS_PATH):
+        return {}
+    try:
+        with open(USER_SETTINGS_PATH, "r", encoding="utf-8") as settings_file:
+            return json.load(settings_file)
+    except Exception:
+        logging.exception("Failed to load user settings.")
+        return {}
+
+
+def save_user_settings(settings):
+    with open(USER_SETTINGS_PATH, "w", encoding="utf-8") as settings_file:
+        json.dump(settings, settings_file, ensure_ascii=False, indent=2)
+    if os.name != "nt":
+        os.chmod(USER_SETTINGS_PATH, 0o600)
 
 
 if __name__ == "__main__":
@@ -78,6 +110,7 @@ if __name__ == "__main__":
                                 )
     audio_clipper = VideoClipper(funasr_model)
     audio_clipper.lang = args.lang
+    user_settings = load_user_settings()
 
     VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi")
 
@@ -137,6 +170,56 @@ if __name__ == "__main__":
 
     def refresh_local_videos():
         return gr.update(choices=list_local_videos())
+
+    def _safe_video_filename_from_url(video_url):
+        parsed = urlparse(video_url)
+        filename = os.path.basename(unquote(parsed.path)).strip()
+        filename = re.sub(r"[^A-Za-z0-9._-]+", "_", filename)
+        if not filename:
+            filename = f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+        name, ext = os.path.splitext(filename)
+        if ext.lower() not in VIDEO_EXTENSIONS:
+            filename = f"{name or 'video'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+        return filename
+
+    def download_video_from_url(video_url):
+        video_url = (video_url or "").strip()
+        parsed = urlparse(video_url)
+        if parsed.scheme not in ("http", "https"):
+            return "Only http/https video URLs are supported.", gr.update(choices=list_local_videos())
+
+        filename = _safe_video_filename_from_url(video_url)
+        output_path = os.path.join(LOCAL_VIDEO_DIR, filename)
+        if os.path.exists(output_path):
+            name, ext = os.path.splitext(filename)
+            filename = f"{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+            output_path = os.path.join(LOCAL_VIDEO_DIR, filename)
+        part_path = output_path + ".part"
+
+        try:
+            with requests.get(video_url, stream=True, timeout=(10, 120)) as response:
+                response.raise_for_status()
+                with open(part_path, "wb") as file_obj:
+                    for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
+                        if chunk:
+                            file_obj.write(chunk)
+            os.replace(part_path, output_path)
+        except Exception as exc:
+            if os.path.exists(part_path):
+                os.remove(part_path)
+            return f"Download failed: {exc}", gr.update(choices=list_local_videos())
+
+        choices = list_local_videos()
+        return f"Downloaded to local_videos/{filename}", gr.update(choices=choices, value=filename)
+
+    def save_llm_settings(prompt_system, prompt_user, model, apikey):
+        save_user_settings({
+            "prompt_system": prompt_system or "",
+            "prompt_user": prompt_user or "",
+            "llm_model": model or DEFAULT_LLM_MODEL,
+            "apikey": apikey or "",
+        })
+        return "Saved. These settings will be loaded automatically next time."
 
     def mix_recog(local_video, video_input, audio_input, hotwords, output_dir):
         output_dir = output_dir.strip()
@@ -322,6 +405,10 @@ if __name__ == "__main__":
                     )
                     refresh_local_video_button = gr.Button("Refresh Local Videos")
                 with gr.Row():
+                    video_url_input = gr.Textbox(label="视频 URL 下载到服务器 | Download URL to Server")
+                    download_video_button = gr.Button("Download URL")
+                download_video_status = gr.Textbox(label="Download Status", interactive=False)
+                with gr.Row():
                     video_input = gr.Video(label="视频输入 | Video Input", height=640, elem_classes=["video-preserve"])
                     audio_input = gr.Audio(label="音频输入 | Audio Input")
                 with gr.Column():
@@ -352,10 +439,14 @@ if __name__ == "__main__":
             with gr.Column():
                 with gr.Tab("🧠 LLM智能裁剪 | LLM Clipping"):
                     with gr.Column():
-                        prompt_head = gr.Textbox(label="Prompt System (按需更改，最好不要变动主体和要求)", value=("你是一个视频srt字幕分析剪辑器，输入视频的srt字幕，"
-                                "分析其中的精彩且尽可能连续的片段并裁剪出来，输出四条以内的片段，将片段中在时间上连续的多个句子及它们的时间戳合并为一条，"
-                                "注意确保文字与时间戳的正确匹配。输出需严格按照如下格式：1. [开始时间-结束时间] 文本，注意其中的连接符是“-”"))
-                        prompt_head2 = gr.Textbox(label="Prompt User（不需要修改，会自动拼接左下角的srt字幕）", value=("这是待裁剪的视频srt字幕："))
+                        prompt_head = gr.Textbox(
+                            label="Prompt System (按需更改，最好不要变动主体和要求)",
+                            value=user_settings.get("prompt_system") or DEFAULT_PROMPT_SYSTEM,
+                        )
+                        prompt_head2 = gr.Textbox(
+                            label="Prompt User（不需要修改，会自动拼接左下角的srt字幕）",
+                            value=user_settings.get("prompt_user") or DEFAULT_PROMPT_USER,
+                        )
                         with gr.Column():
                             with gr.Row():
                                 llm_model = gr.Dropdown(
@@ -370,10 +461,17 @@ if __name__ == "__main__":
                                              "gpt-4-turbo",
                                              "g4f-gpt-3.5-turbo",
                                              "pegasus1.5"],
-                                    value="deepseek-v4-flash",
+                                    value=user_settings.get("llm_model") or DEFAULT_LLM_MODEL,
                                     label="LLM Model Name",
                                     allow_custom_value=True)
-                                apikey_input = gr.Textbox(label="DeepSeek API Key / APIKEY", type="password")
+                                apikey_input = gr.Textbox(
+                                    label="DeepSeek API Key / APIKEY",
+                                    type="password",
+                                    value=user_settings.get("apikey") or "",
+                                )
+                            with gr.Row():
+                                save_settings_button = gr.Button("保存提示词/API | Save Settings")
+                                save_settings_status = gr.Textbox(label="Settings Status", interactive=False)
                             llm_button =  gr.Button("LLM推理 | LLM Inference（首先进行识别，非g4f需配置对应apikey）", variant="primary")
                         llm_result = gr.Textbox(label="LLM Clipper Result")
                         with gr.Row():
@@ -401,6 +499,14 @@ if __name__ == "__main__":
                             refresh_local_videos,
                             inputs=[],
                             outputs=[local_video_input])
+        download_video_button.click(
+                            download_video_from_url,
+                            inputs=[video_url_input],
+                            outputs=[download_video_status, local_video_input])
+        save_settings_button.click(
+                            save_llm_settings,
+                            inputs=[prompt_head, prompt_head2, llm_model, apikey_input],
+                            outputs=[save_settings_status])
         recog_button.click(mix_recog, 
                             inputs=[local_video_input,
                                     video_input, 

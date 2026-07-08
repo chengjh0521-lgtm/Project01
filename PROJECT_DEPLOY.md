@@ -26,6 +26,14 @@ You can either paste the DeepSeek API key in the UI, or set:
 set DEEPSEEK_API_KEY=your_api_key
 ```
 
+The UI has a `保存提示词/API | Save Settings` button. It saves the current system prompt, user prompt, selected model, and API key to:
+
+```text
+user_settings.json
+```
+
+This file is ignored by Git. On Linux, the app writes it with `600` permissions.
+
 ## Output And Temp Files
 
 Runtime files are intentionally ignored by Git:

@@ -5,6 +5,7 @@ ClipVideo/clipvideo/output
 *.spec
 funclip-env/
 .venv/
+user_settings.json
 tmp/
 gradio_tmp/
 output/
