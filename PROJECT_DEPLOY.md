@@ -33,6 +33,7 @@ Runtime files are intentionally ignored by Git:
 - `tmp/`
 - `gradio_tmp/`
 - `output/`
+- `local_videos/`
 - `funclip-env/`
 - `*.log`
 
@@ -43,6 +44,22 @@ D:\pandas_project\pandagent\FunClip\output
 ```
 
 On a server, change this path to a writable directory with enough disk space.
+
+## Server Local Videos
+
+To avoid browser uploads for large videos, place source videos in:
+
+```text
+local_videos/
+```
+
+Example:
+
+```bash
+scp ./your-video.mp4 root@your-server:/opt/funclip-project01/local_videos/
+```
+
+Then open the web UI, click `Refresh Local Videos`, choose the video from `Server Local Video`, and run `ASR`.
 
 ## Server Mode
 

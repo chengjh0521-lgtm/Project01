@@ -8,5 +8,7 @@ funclip-env/
 tmp/
 gradio_tmp/
 output/
+local_videos/*
+!local_videos/.gitkeep
 *.log
 funclip-server.*.log

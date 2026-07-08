@@ -23,8 +23,12 @@ from introduction import top_md_1, top_md_3, top_md_4
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 LOCAL_TMP_DIR = os.path.join(PROJECT_ROOT, "tmp")
 LOCAL_GRADIO_TMP_DIR = os.path.join(PROJECT_ROOT, "gradio_tmp")
+LOCAL_VIDEO_DIR = os.path.join(PROJECT_ROOT, "local_videos")
+DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 os.makedirs(LOCAL_TMP_DIR, exist_ok=True)
 os.makedirs(LOCAL_GRADIO_TMP_DIR, exist_ok=True)
+os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
+os.makedirs(DEFAULT_OUTPUT_DIR, exist_ok=True)
 os.environ.setdefault("TMP", LOCAL_TMP_DIR)
 os.environ.setdefault("TEMP", LOCAL_TMP_DIR)
 os.environ.setdefault("TMPDIR", LOCAL_TMP_DIR)
@@ -74,6 +78,30 @@ if __name__ == "__main__":
                                 )
     audio_clipper = VideoClipper(funasr_model)
     audio_clipper.lang = args.lang
+
+    VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi")
+
+    def list_local_videos():
+        choices = []
+        for root, _, files in os.walk(LOCAL_VIDEO_DIR):
+            for name in files:
+                if not name.lower().endswith(VIDEO_EXTENSIONS):
+                    continue
+                path = os.path.join(root, name)
+                rel_path = os.path.relpath(path, LOCAL_VIDEO_DIR).replace(os.sep, "/")
+                choices.append(rel_path)
+        return sorted(choices)
+
+    def resolve_local_video(local_video):
+        if not local_video:
+            return None
+        candidate = os.path.abspath(os.path.join(LOCAL_VIDEO_DIR, local_video))
+        local_root = os.path.abspath(LOCAL_VIDEO_DIR)
+        if not candidate.startswith(local_root + os.sep) and candidate != local_root:
+            raise ValueError("Invalid local video path.")
+        if not os.path.isfile(candidate):
+            raise FileNotFoundError(f"Local video not found: {local_video}")
+        return candidate
     
     server_name='127.0.0.1'
     if args.listen:
@@ -107,13 +135,23 @@ if __name__ == "__main__":
             dest_text, start_ost, end_ost, state, dest_spk=video_spk_input, output_dir=output_dir
             )
 
-    def mix_recog(video_input, audio_input, hotwords, output_dir):
+    def refresh_local_videos():
+        return gr.update(choices=list_local_videos())
+
+    def mix_recog(local_video, video_input, audio_input, hotwords, output_dir):
         output_dir = output_dir.strip()
         if not len(output_dir):
             output_dir = None
         else:
             output_dir = os.path.abspath(output_dir)
         audio_state, video_state = None, None
+        local_video_path = resolve_local_video(local_video)
+        if local_video_path is not None:
+            res_text, res_srt, video_state = video_recog(
+                local_video_path, 'No', hotwords, output_dir=output_dir)
+            text_file = save_text_to_file(res_text, 'txt', output_dir)
+            srt_file = save_text_to_file(res_srt, 'srt', output_dir)
+            return res_text, res_srt, video_state, None, text_file, srt_file
         if video_input is not None:
             res_text, res_srt, video_state = video_recog(
                 video_input, 'No', hotwords, output_dir=output_dir)
@@ -127,13 +165,20 @@ if __name__ == "__main__":
             srt_file = save_text_to_file(res_srt, 'srt', output_dir)
             return res_text, res_srt, None, audio_state, text_file, srt_file
     
-    def mix_recog_speaker(video_input, audio_input, hotwords, output_dir):
+    def mix_recog_speaker(local_video, video_input, audio_input, hotwords, output_dir):
         output_dir = output_dir.strip()
         if not len(output_dir):
             output_dir = None
         else:
             output_dir = os.path.abspath(output_dir)
         audio_state, video_state = None, None
+        local_video_path = resolve_local_video(local_video)
+        if local_video_path is not None:
+            res_text, res_srt, video_state = video_recog(
+                local_video_path, 'Yes', hotwords, output_dir=output_dir)
+            text_file = save_text_to_file(res_text, 'txt', output_dir)
+            srt_file = save_text_to_file(res_srt, 'srt', output_dir)
+            return res_text, res_srt, video_state, None, text_file, srt_file
         if video_input is not None:
             res_text, res_srt, video_state = video_recog(
                 video_input, 'Yes', hotwords, output_dir=output_dir)
@@ -269,6 +314,14 @@ if __name__ == "__main__":
         with gr.Row():
             with gr.Column():
                 with gr.Row():
+                    local_video_input = gr.Dropdown(
+                        choices=list_local_videos(),
+                        label="服务器本地视频 | Server Local Video",
+                        allow_custom_value=False,
+                        interactive=True,
+                    )
+                    refresh_local_video_button = gr.Button("Refresh Local Videos")
+                with gr.Row():
                     video_input = gr.Video(label="视频输入 | Video Input", height=640, elem_classes=["video-preserve"])
                     audio_input = gr.Audio(label="音频输入 | Audio Input")
                 with gr.Column():
@@ -287,7 +340,7 @@ if __name__ == "__main__":
                         # with gr.Row():
                             # video_sd_switch = gr.Radio(["No", "Yes"], label="👥区分说话人 Get Speakers", value='No')
                         hotwords_input = gr.Textbox(label="🚒 热词 | Hotwords(可以为空，多个热词使用空格分隔，仅支持中文热词)")
-                        output_dir = gr.Textbox(label="📁 文件输出路径 | File Output Dir (可以为空，Linux, mac系统可以稳定使用)", value=" ")
+                        output_dir = gr.Textbox(label="📁 文件输出路径 | File Output Dir (可以为空，Linux, mac系统可以稳定使用)", value=DEFAULT_OUTPUT_DIR)
                         with gr.Row():
                             recog_button = gr.Button("👂 识别 | ASR", variant="primary")
                             recog_button2 = gr.Button("👂👫 识别+区分说话人 | ASR+SD")
@@ -344,15 +397,21 @@ if __name__ == "__main__":
                 clip_message = gr.Textbox(label="⚠️ 裁剪信息 | Clipping Log")
                 srt_clipped = gr.Textbox(label="📖 裁剪部分SRT字幕内容 | Clipped RST Subtitles")            
                 
+        refresh_local_video_button.click(
+                            refresh_local_videos,
+                            inputs=[],
+                            outputs=[local_video_input])
         recog_button.click(mix_recog, 
-                            inputs=[video_input, 
+                            inputs=[local_video_input,
+                                    video_input, 
                                     audio_input, 
                                     hotwords_input, 
                                     output_dir,
                                     ], 
                             outputs=[video_text_output, video_srt_output, video_state, audio_state, video_text_file, video_srt_file])
         recog_button2.click(mix_recog_speaker, 
-                            inputs=[video_input, 
+                            inputs=[local_video_input,
+                                    video_input, 
                                     audio_input, 
                                     hotwords_input, 
                                     output_dir,
