@@ -9,4 +9,5 @@ set TEMP=%~dp0tmp
 set TMPDIR=%~dp0tmp
 set GRADIO_TEMP_DIR=%~dp0gradio_tmp
 if "%IMAGEMAGICK_BINARY%"=="" set IMAGEMAGICK_BINARY=magick
-funclip-env\Scripts\python.exe funclip\launch.py -m paraformer -p 7860 --listen
+if "%ASR_MODEL%"=="" set ASR_MODEL=fun-asr-nano
+funclip-env\Scripts\python.exe funclip\launch.py -m %ASR_MODEL% -p 7860 --listen
