@@ -7,9 +7,11 @@ import re
 import os
 import sys
 import copy
+import json
 import librosa
 import logging
 import argparse
+import subprocess
 import numpy as np
 import soundfile as sf
 from moviepy.editor import *
@@ -25,6 +27,62 @@ from utils.trans_utils import pre_proc, proc, write_state, load_state, proc_spk,
 MAX_SUBTITLE_DURATION_MS = 8000
 MAX_SUBTITLE_TOKENS = 30
 SENSEVOICE_TAG_RE = re.compile(r"<\|[^|>]+\|>")
+
+
+def _probe_video_rotation(video_filename):
+    try:
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream_tags=rotate:stream_side_data=rotation",
+            "-of",
+            "json",
+            video_filename,
+        ]
+        probe = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        stream = (json.loads(probe.stdout).get("streams") or [{}])[0]
+    except Exception:
+        return 0
+
+    rotate = (stream.get("tags") or {}).get("rotate")
+    if rotate not in (None, ""):
+        try:
+            return int(float(rotate)) % 360
+        except ValueError:
+            pass
+
+    for side_data in stream.get("side_data_list") or []:
+        rotation = side_data.get("rotation")
+        if rotation not in (None, ""):
+            try:
+                return int(float(rotation)) % 360
+            except ValueError:
+                pass
+    return 0
+
+
+def _open_video_preserving_display(video_filename):
+    video = mpy.VideoFileClip(video_filename)
+    rotation = int(getattr(video, "rotation", 0) or 0) % 360
+    rotation = rotation or _probe_video_rotation(video_filename)
+    if rotation in (90, 180, 270):
+        logging.warning("Applying source video rotation metadata: %s degrees.", rotation)
+        video = video.rotate(rotation, expand=True)
+        video.rotation = 0
+    return video
+
+
+def _with_subtitles(video_clip, subs, font_size, font_color):
+    generator = lambda txt: TextClip(txt, font='./font/STHeitiMedium.ttc', fontsize=font_size, color=font_color)
+    subtitles = SubtitlesClip(subs, generator)
+    return CompositeVideoClip(
+        [video_clip, subtitles.set_pos(('center', 'bottom'))],
+        size=video_clip.size,
+    )
 
 
 def _is_valid_timestamp(timestamp):
@@ -227,7 +285,7 @@ class VideoClipper():
         return (sr, res_audio), message, clip_srt
 
     def video_recog(self, video_filename, sd_switch='no', hotwords="", output_dir=None):
-        video = mpy.VideoFileClip(video_filename)
+        video = _open_video_preserving_display(video_filename)
         # Extract the base name, add '_clip.mp4', and 'wav'
         if output_dir is not None:
             os.makedirs(output_dir, exist_ok=True)
@@ -322,9 +380,7 @@ class VideoClipper():
             start_end_info = "from {} to {}".format(start, end)
             clip_srt += srt_clip
             if add_sub:
-                generator = lambda txt: TextClip(txt, font='./font/STHeitiMedium.ttc', fontsize=font_size, color=font_color)
-                subtitles = SubtitlesClip(subs, generator)
-                video_clip = CompositeVideoClip([video_clip, subtitles.set_pos(('center','bottom'))])
+                video_clip = _with_subtitles(video_clip, subs, font_size, font_color)
             concate_clip = [video_clip]
             time_acc_ost += end - start
             for _ts in ts[1:]:
@@ -341,9 +397,7 @@ class VideoClipper():
                 start_end_info += ", from {} to {}".format(str(start)[:5], str(end)[:5])
                 clip_srt += srt_clip
                 if add_sub:
-                    generator = lambda txt: TextClip(txt, font='./font/STHeitiMedium.ttc', fontsize=font_size, color=font_color)
-                    subtitles = SubtitlesClip(chi_subs, generator)
-                    _video_clip = CompositeVideoClip([_video_clip, subtitles.set_pos(('center','bottom'))])
+                    _video_clip = _with_subtitles(_video_clip, chi_subs, font_size, font_color)
                     # _video_clip.write_videofile("debug.mp4", audio_codec="aac")
                 concate_clip.append(copy.copy(_video_clip))
                 time_acc_ost += end - start
@@ -362,7 +416,13 @@ class VideoClipper():
             else:
                 clip_video_file = clip_video_file[:-4] + '_no{}.mp4'.format(self.GLOBAL_COUNT)
                 temp_audio_file = clip_video_file[:-4] + '_tempaudio_no{}.mp4'.format(self.GLOBAL_COUNT)
-            video_clip.write_videofile(clip_video_file, audio_codec="aac", temp_audiofile=temp_audio_file)
+            video_clip.write_videofile(
+                clip_video_file,
+                codec="libx264",
+                audio_codec="aac",
+                temp_audiofile=temp_audio_file,
+                ffmpeg_params=["-pix_fmt", "yuv420p"],
+            )
             self.GLOBAL_COUNT += 1
         else:
             clip_video_file = video_filename
@@ -516,7 +576,7 @@ def runner(stage, file, sd_switch, output_dir, dest_text, dest_spk, start_ost, e
             else:
                 state['clip_video_file'] = output_file
             clip_srt_file = state['clip_video_file'][:-3] + 'srt'
-            state['video'] = mpy.VideoFileClip(file)
+            state['video'] = _open_video_preserving_display(file)
             clip_video_file, message, srt_clip = audio_clipper.video_clip(dest_text, start_ost, end_ost, state, dest_spk=dest_spk)
             logging.warning("Clipping Log: {}".format(message))
             logging.warning("Save clipped mp4 file to {}".format(clip_video_file))
