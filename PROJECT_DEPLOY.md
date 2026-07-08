@@ -111,3 +111,5 @@ FUNCLIP_ASR_HUB=hf PORT=7860 ./start_funclip_server.sh
 ```
 
 The `Hotwords` field is prefilled with common medical terms. Add department names, doctor/patient names, drug names, and procedure names before running ASR, then click `Save Settings`.
+
+When using `ASR+SD`, Fun-ASR-Nano also loads punctuation and speaker models. The first run may download extra model files.
