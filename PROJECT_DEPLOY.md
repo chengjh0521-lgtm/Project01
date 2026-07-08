@@ -87,3 +87,27 @@ PORT=7860 ./start_funclip_server.sh
 ```
 
 The server script binds Gradio to `0.0.0.0`, so place it behind your reverse proxy or firewall as needed.
+
+## Sichuan Dialect ASR
+
+The startup scripts default to `fun-asr-nano`, which is preferred for Sichuan/Chongqing accented Mandarin and medical conversations.
+
+Use the default:
+
+```bash
+PORT=7860 ./start_funclip_server.sh
+```
+
+Temporarily switch back to Paraformer:
+
+```bash
+ASR_MODEL=paraformer PORT=7860 ./start_funclip_server.sh
+```
+
+If ModelScope download is unavailable, try Hugging Face:
+
+```bash
+FUNCLIP_ASR_HUB=hf PORT=7860 ./start_funclip_server.sh
+```
+
+The `Hotwords` field is prefilled with common medical terms. Add department names, doctor/patient names, drug names, and procedure names before running ASR, then click `Save Settings`.
