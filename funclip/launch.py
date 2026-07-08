@@ -177,9 +177,12 @@ if __name__ == "__main__":
     def llm_inference(system_content, user_content, srt_text, model, apikey, video_input=None):
         SUPPORT_LLM_PREFIX = ['qwen', 'gpt', 'g4f', 'moonshot', 'deepseek', 'pegasus']
         format_instruction = (
-            "\n\nSelect 1 to 3 eye-catching highlight clips. "
-            "Each clip should be close to 60 seconds when possible. "
-            "Every selected clip must be output as: N. [HH:MM:SS-HH:MM:SS] reason/title. "
+            "\n\nSelect subtitle-aligned highlight material by content quality, not by a fixed duration. "
+            "The final clip may be shorter or longer than 60 seconds when the story needs it; do not pad or force an exact length. "
+            "Prefer complete, coherent statements. Remove filler, repeated phrases, pauses, greetings, transitions, and weak sentences when possible. "
+            "If a strong highlight contains one or two weak sentences in the middle, split it into multiple timestamp ranges so those weak sentences are omitted; "
+            "the clipping tool will concatenate the selected ranges in order. "
+            "Output 1 to 6 ranges total, ordered by time, each as: N. [HH:MM:SS-HH:MM:SS] short reason/title. "
             "Do not output clips without a timestamp range."
         )
         system_content = (system_content or "") + format_instruction
@@ -244,8 +247,20 @@ if __name__ == "__main__":
             return None, (sr, res_audio), message, clip_srt
     
     # gradio interface
+    app_css = """
+    .video-preserve video {
+        object-fit: contain !important;
+        width: 100% !important;
+        height: auto !important;
+        max-height: 78vh !important;
+        background: #000 !important;
+    }
+    .video-preserve [data-testid="video"] {
+        background: #000 !important;
+    }
+    """
     theme = gr.Theme.load("funclip/utils/theme.json")
-    with gr.Blocks(theme=theme) as funclip_service:
+    with gr.Blocks(theme=theme, css=app_css) as funclip_service:
         gr.Markdown(top_md_1)
         # gr.Markdown(top_md_2)
         gr.Markdown(top_md_3)
@@ -254,7 +269,7 @@ if __name__ == "__main__":
         with gr.Row():
             with gr.Column():
                 with gr.Row():
-                    video_input = gr.Video(label="视频输入 | Video Input")
+                    video_input = gr.Video(label="视频输入 | Video Input", height=640, elem_classes=["video-preserve"])
                     audio_input = gr.Audio(label="音频输入 | Audio Input")
                 with gr.Column():
                     gr.Examples(['https://isv-data.oss-cn-hangzhou.aliyuncs.com/ics/MaaS/ClipVideo/%E4%B8%BA%E4%BB%80%E4%B9%88%E8%A6%81%E5%A4%9A%E8%AF%BB%E4%B9%A6%EF%BC%9F%E8%BF%99%E6%98%AF%E6%88%91%E5%90%AC%E8%BF%87%E6%9C%80%E5%A5%BD%E7%9A%84%E7%AD%94%E6%A1%88-%E7%89%87%E6%AE%B5.mp4', 
@@ -324,7 +339,7 @@ if __name__ == "__main__":
                     font_size = gr.Slider(minimum=10, maximum=100, value=32, step=2, label="🔠 字幕字体大小 | Subtitle Font Size")
                     font_color = gr.Radio(["black", "white", "green", "red"], label="🌈 字幕颜色 | Subtitle Color", value='white')
                     # font = gr.Radio(["黑体", "Alibaba Sans"], label="字体 Font")
-                video_output = gr.Video(label="裁剪结果 | Video Clipped")
+                video_output = gr.Video(label="裁剪结果 | Video Clipped", height=640, elem_classes=["video-preserve"])
                 audio_output = gr.Audio(label="裁剪结果 | Audio Clipped")
                 clip_message = gr.Textbox(label="⚠️ 裁剪信息 | Clipping Log")
                 srt_clipped = gr.Textbox(label="📖 裁剪部分SRT字幕内容 | Clipped RST Subtitles")            
