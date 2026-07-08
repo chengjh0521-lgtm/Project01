@@ -249,10 +249,43 @@ def _normalize_recognition_result(result):
 
 
 class VideoClipper():
-    def __init__(self, funasr_model):
+    def __init__(self, funasr_model, asr_model_name="paraformer"):
         logging.warning("Initializing VideoClipper.")
         self.funasr_model = funasr_model
+        self.asr_model_name = asr_model_name
         self.GLOBAL_COUNT = 0
+
+    def _generate_asr(self, data, sd_switch='no', hotwords="", output_dir=None):
+        if self.asr_model_name == "fun-asr-nano":
+            hotword_list = [word for word in str(hotwords or "").split() if word]
+            kwargs = {
+                "input": [data],
+                "cache": {},
+                "batch_size": 1,
+                "language": "中文" if self.lang == "zh" else "auto",
+                "itn": True,
+            }
+            if hotword_list:
+                kwargs["hotwords"] = hotword_list
+            if output_dir is not None:
+                kwargs["output_dir"] = output_dir
+            return self.funasr_model.generate(**kwargs)
+
+        kwargs = {
+            "return_spk_res": sd_switch == 'Yes',
+            "return_raw_text": True,
+            "is_final": True,
+            "hotword": hotwords,
+            "output_dir": output_dir,
+            "pred_timestamp": self.lang == 'en',
+            "en_post_proc": self.lang == 'en',
+            "cache": {},
+        }
+        if sd_switch == 'Yes':
+            kwargs["return_spk_res"] = True
+        else:
+            kwargs["sentence_timestamp"] = True
+        return self.funasr_model.generate(data, **kwargs)
 
     def recog(self, audio_input, sd_switch='no', state=None, hotwords="", output_dir=None):
         if state is None:
@@ -270,29 +303,12 @@ class VideoClipper():
             data = data[:,0]
         state['audio_input'] = (sr, data)
         if sd_switch == 'Yes':
-            rec_result = self.funasr_model.generate(data, 
-                                                    return_spk_res=True,
-                                                    return_raw_text=True, 
-                                                    is_final=True,
-                                                    output_dir=output_dir, 
-                                                    hotword=hotwords, 
-                                                    pred_timestamp=self.lang=='en',
-                                                    en_post_proc=self.lang=='en',
-                                                    cache={})
+            rec_result = self._generate_asr(data, sd_switch, hotwords, output_dir)
             res_text, raw_text, timestamp, sentence_info = _normalize_recognition_result(rec_result[0])
             res_srt = generate_srt(sentence_info)
             state['sd_sentences'] = sentence_info
         else:
-            rec_result = self.funasr_model.generate(data, 
-                                                    return_spk_res=False, 
-                                                    sentence_timestamp=True, 
-                                                    return_raw_text=True, 
-                                                    is_final=True, 
-                                                    hotword=hotwords,
-                                                    output_dir=output_dir,
-                                                    pred_timestamp=self.lang=='en',
-                                                    en_post_proc=self.lang=='en',
-                                                    cache={})
+            rec_result = self._generate_asr(data, sd_switch, hotwords, output_dir)
             res_text, raw_text, timestamp, sentence_info = _normalize_recognition_result(rec_result[0])
             res_srt = generate_srt(sentence_info)
         state['recog_res_raw'] = raw_text

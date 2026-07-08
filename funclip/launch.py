@@ -48,6 +48,13 @@ DEFAULT_PROMPT_SYSTEM = (
 )
 DEFAULT_PROMPT_USER = "这是待裁剪的视频srt字幕："
 DEFAULT_LLM_MODEL = "deepseek-v4-flash"
+DEFAULT_ASR_MODEL = os.environ.get("ASR_MODEL") or os.environ.get("FUNCLIP_ASR_MODEL") or "fun-asr-nano"
+DEFAULT_MEDICAL_HOTWORDS = (
+    "四川话 成都话 重庆话 医生 患者 门诊 复查 病史 症状 诊断 治疗 用药 "
+    "血压 血糖 血脂 高血压 糖尿病 冠心病 心电图 彩超 CT 核磁 共振 "
+    "炎症 感染 抗生素 头孢 阿莫西林 胰岛素 二甲双胍 阿司匹林 "
+    "咳嗽 发烧 胸闷 气短 头晕 恶心 呕吐 腹痛 腹泻 过敏"
+)
 
 
 def load_user_settings():
@@ -71,7 +78,7 @@ def save_user_settings(settings):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='argparse testing')
     parser.add_argument('--lang', '-l', type=str, default = "zh", help="language")
-    parser.add_argument('--model', '-m', type=str, default="paraformer", choices=["paraformer", "fun-asr-nano", "sensevoice"], help="ASR model: paraformer, fun-asr-nano, or sensevoice")
+    parser.add_argument('--model', '-m', type=str, default=DEFAULT_ASR_MODEL, choices=["paraformer", "fun-asr-nano", "sensevoice"], help="ASR model: paraformer, fun-asr-nano, or sensevoice")
     parser.add_argument('--share', '-s', action='store_true', help="if to establish gradio share link")
     parser.add_argument('--port', '-p', type=int, default=7860, help='port number')
     parser.add_argument('--listen', action='store_true', help="if to listen to all hosts")
@@ -88,7 +95,7 @@ if __name__ == "__main__":
                                     vad_model="fsmn-vad",
                                     vad_kwargs={"max_single_segment_time": 30000},
                                     spk_model="cam++",
-                                    hub="hf",
+                                    hub=os.environ.get("FUNCLIP_ASR_HUB", "ms"),
                                     )
         elif hasattr(args, 'model') and args.model == 'sensevoice':
             funasr_model = AutoModel(model="iic/SenseVoiceSmall",
@@ -108,7 +115,7 @@ if __name__ == "__main__":
                                 punc_model="damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
                                 spk_model="damo/speech_campplus_sv_zh-cn_16k-common",
                                 )
-    audio_clipper = VideoClipper(funasr_model)
+    audio_clipper = VideoClipper(funasr_model, asr_model_name=args.model)
     audio_clipper.lang = args.lang
     user_settings = load_user_settings()
 
@@ -212,12 +219,13 @@ if __name__ == "__main__":
         choices = list_local_videos()
         return f"Downloaded to local_videos/{filename}", gr.update(choices=choices, value=filename)
 
-    def save_llm_settings(prompt_system, prompt_user, model, apikey):
+    def save_llm_settings(prompt_system, prompt_user, model, apikey, hotwords):
         save_user_settings({
             "prompt_system": prompt_system or "",
             "prompt_user": prompt_user or "",
             "llm_model": model or DEFAULT_LLM_MODEL,
             "apikey": apikey or "",
+            "hotwords": hotwords or "",
         })
         return "Saved. These settings will be loaded automatically next time."
 
@@ -426,7 +434,15 @@ if __name__ == "__main__":
                     with gr.Column():
                         # with gr.Row():
                             # video_sd_switch = gr.Radio(["No", "Yes"], label="👥区分说话人 Get Speakers", value='No')
-                        hotwords_input = gr.Textbox(label="🚒 热词 | Hotwords(可以为空，多个热词使用空格分隔，仅支持中文热词)")
+                        hotwords_input = gr.Textbox(
+                            label="🚒 热词 | Hotwords(可以为空，多个热词使用空格分隔，仅支持中文热词)",
+                            value=user_settings.get("hotwords") or DEFAULT_MEDICAL_HOTWORDS,
+                        )
+                        asr_model_info = gr.Textbox(
+                            label="ASR Model",
+                            value=args.model,
+                            interactive=False,
+                        )
                         output_dir = gr.Textbox(label="📁 文件输出路径 | File Output Dir (可以为空，Linux, mac系统可以稳定使用)", value=DEFAULT_OUTPUT_DIR)
                         with gr.Row():
                             recog_button = gr.Button("👂 识别 | ASR", variant="primary")
@@ -505,7 +521,7 @@ if __name__ == "__main__":
                             outputs=[download_video_status, local_video_input])
         save_settings_button.click(
                             save_llm_settings,
-                            inputs=[prompt_head, prompt_head2, llm_model, apikey_input],
+                            inputs=[prompt_head, prompt_head2, llm_model, apikey_input, hotwords_input],
                             outputs=[save_settings_status])
         recog_button.click(mix_recog, 
                             inputs=[local_video_input,
