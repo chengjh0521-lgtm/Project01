@@ -15,6 +15,7 @@ import argparse
 import subprocess
 import numpy as np
 import soundfile as sf
+from PIL import Image, ImageColor, ImageDraw, ImageFont
 
 if os.environ.get("IMAGEMAGICK_BINARY") in (None, "", "unset"):
     imagemagick_binary = shutil.which("magick") or shutil.which("convert")
@@ -23,7 +24,7 @@ if os.environ.get("IMAGEMAGICK_BINARY") in (None, "", "unset"):
 
 from moviepy.editor import *
 import moviepy.editor as mpy
-from moviepy.video.tools.subtitles import SubtitlesClip, TextClip
+from moviepy.video.tools.subtitles import SubtitlesClip
 from moviepy.editor import VideoFileClip, concatenate_videoclips
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from utils.subtitle_utils import generate_srt, generate_srt_clip, str2list
@@ -83,8 +84,81 @@ def _open_video_preserving_display(video_filename):
     return video
 
 
+def _load_subtitle_font(font_size):
+    font_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "font",
+        "STHeitiMedium.ttc",
+    )
+    try:
+        return ImageFont.truetype(font_path, font_size)
+    except OSError:
+        logging.warning("Subtitle font not found, falling back to Pillow default font.")
+        return ImageFont.load_default()
+
+
+def _text_size(draw, text, font):
+    if not text:
+        return 0, 0
+    left, top, right, bottom = draw.multiline_textbbox((0, 0), text, font=font, spacing=6, stroke_width=2)
+    return right - left, bottom - top
+
+
+def _wrap_subtitle_text(text, font, max_width):
+    probe = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(probe)
+    wrapped_lines = []
+
+    for raw_line in str(text).splitlines() or [""]:
+        line = ""
+        for char in raw_line:
+            candidate = line + char
+            width, _ = _text_size(draw, candidate, font)
+            if line and width > max_width:
+                wrapped_lines.append(line)
+                line = char
+            else:
+                line = candidate
+        if line:
+            wrapped_lines.append(line)
+
+    return "\n".join(wrapped_lines) if wrapped_lines else str(text)
+
+
+def _subtitle_image_clip(text, font_size, font_color, video_size):
+    font = _load_subtitle_font(font_size)
+    max_width = max(240, int(video_size[0] * 0.9))
+    wrapped_text = _wrap_subtitle_text(text, font, max_width)
+
+    probe = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(probe)
+    text_width, text_height = _text_size(draw, wrapped_text, font)
+    padding_x = max(16, font_size // 2)
+    padding_y = max(10, font_size // 4)
+    image_size = (text_width + padding_x * 2, text_height + padding_y * 2)
+    image = Image.new("RGBA", image_size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+
+    try:
+        fill = ImageColor.getrgb(font_color)
+    except ValueError:
+        fill = (255, 255, 255)
+
+    draw.multiline_text(
+        (padding_x, padding_y),
+        wrapped_text,
+        font=font,
+        fill=fill + (255,),
+        spacing=6,
+        align="center",
+        stroke_width=2,
+        stroke_fill=(0, 0, 0, 190),
+    )
+    return ImageClip(np.array(image), transparent=True)
+
+
 def _with_subtitles(video_clip, subs, font_size, font_color):
-    generator = lambda txt: TextClip(txt, font='./font/STHeitiMedium.ttc', fontsize=font_size, color=font_color)
+    generator = lambda txt: _subtitle_image_clip(txt, font_size, font_color, video_clip.size)
     subtitles = SubtitlesClip(subs, generator)
     return CompositeVideoClip(
         [video_clip, subtitles.set_pos(('center', 'bottom'))],
