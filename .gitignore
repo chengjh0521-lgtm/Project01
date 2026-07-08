@@ -3,3 +3,10 @@
 ClipVideo/clipvideo/output
 **/__pycache__/
 *.spec
+funclip-env/
+.venv/
+tmp/
+gradio_tmp/
+output/
+*.log
+funclip-server.*.log

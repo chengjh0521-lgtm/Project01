@@ -20,6 +20,18 @@ from utils.trans_utils import extract_timestamps
 from introduction import top_md_1, top_md_3, top_md_4
 
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+LOCAL_TMP_DIR = os.path.join(PROJECT_ROOT, "tmp")
+LOCAL_GRADIO_TMP_DIR = os.path.join(PROJECT_ROOT, "gradio_tmp")
+os.makedirs(LOCAL_TMP_DIR, exist_ok=True)
+os.makedirs(LOCAL_GRADIO_TMP_DIR, exist_ok=True)
+os.environ.setdefault("TMP", LOCAL_TMP_DIR)
+os.environ.setdefault("TEMP", LOCAL_TMP_DIR)
+os.environ.setdefault("TMPDIR", LOCAL_TMP_DIR)
+os.environ.setdefault("GRADIO_TEMP_DIR", LOCAL_GRADIO_TMP_DIR)
+tempfile.tempdir = LOCAL_TMP_DIR
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='argparse testing')
     parser.add_argument('--lang', '-l', type=str, default = "zh", help="language")
@@ -27,7 +39,10 @@ if __name__ == "__main__":
     parser.add_argument('--share', '-s', action='store_true', help="if to establish gradio share link")
     parser.add_argument('--port', '-p', type=int, default=7860, help='port number')
     parser.add_argument('--listen', action='store_true', help="if to listen to all hosts")
+    parser.add_argument('--with-examples', action='store_true', help="load remote demo examples")
     args = parser.parse_args()
+    if not args.with_examples:
+        gr.Examples = lambda *example_args, **example_kwargs: None
     
     if args.lang == 'zh':
         if hasattr(args, 'model') and args.model == 'fun-asr-nano':
@@ -161,6 +176,13 @@ if __name__ == "__main__":
         
     def llm_inference(system_content, user_content, srt_text, model, apikey, video_input=None):
         SUPPORT_LLM_PREFIX = ['qwen', 'gpt', 'g4f', 'moonshot', 'deepseek', 'pegasus']
+        format_instruction = (
+            "\n\nSelect 1 to 3 eye-catching highlight clips. "
+            "Each clip should be close to 60 seconds when possible. "
+            "Every selected clip must be output as: N. [HH:MM:SS-HH:MM:SS] reason/title. "
+            "Do not output clips without a timestamp range."
+        )
+        system_content = (system_content or "") + format_instruction
         if model.startswith('pegasus'):
             # TwelveLabs Pegasus reasons over the actual video (visuals + audio)
             # rather than the ASR transcript, so it needs the video source.
@@ -171,7 +193,7 @@ if __name__ == "__main__":
         if model.startswith('qwen'):
             return call_qwen_model(apikey, model, user_content+'\n'+srt_text, system_content)
         if model.startswith('gpt') or model.startswith('moonshot') or model.startswith('deepseek'):
-            return openai_call(apikey, model, system_content, user_content+'\n'+srt_text)
+            return openai_call(apikey, model, user_content+'\n'+srt_text, system_content)
         elif model.startswith('g4f'):
             model = "-".join(model.split('-')[1:])
             return g4f_openai_call(model, system_content, user_content+'\n'+srt_text)
@@ -181,6 +203,9 @@ if __name__ == "__main__":
     
     def AI_clip(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir):
         timestamp_list = extract_timestamps(LLM_res)
+        if not timestamp_list:
+            message = "No timestamps found in LLM result. Please make sure the LLM output contains ranges like [00:01:20-00:02:20]."
+            return None, None, message, ""
         output_dir = output_dir.strip()
         if not len(output_dir):
             output_dir = None
@@ -199,6 +224,9 @@ if __name__ == "__main__":
     
     def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir):
         timestamp_list = extract_timestamps(LLM_res)
+        if not timestamp_list:
+            message = "No timestamps found in LLM result. Please make sure the LLM output contains ranges like [00:01:20-00:02:20]."
+            return None, None, message, ""
         output_dir = output_dir.strip()
         if not len(output_dir):
             output_dir = None
@@ -264,17 +292,20 @@ if __name__ == "__main__":
                             with gr.Row():
                                 llm_model = gr.Dropdown(
                                     choices=[
+                                        "deepseek-v4-flash",
+                                        "deepseek-v4-pro",
                                         "deepseek-chat",
+                                        "deepseek-reasoner",
                                         "qwen-plus",
                                              "gpt-3.5-turbo", 
                                              "gpt-3.5-turbo-0125", 
                                              "gpt-4-turbo",
                                              "g4f-gpt-3.5-turbo",
                                              "pegasus1.5"],
-                                    value="deepseek-chat",
+                                    value="deepseek-v4-flash",
                                     label="LLM Model Name",
                                     allow_custom_value=True)
-                                apikey_input = gr.Textbox(label="APIKEY")
+                                apikey_input = gr.Textbox(label="DeepSeek API Key / APIKEY", type="password")
                             llm_button =  gr.Button("LLM推理 | LLM Inference（首先进行识别，非g4f需配置对应apikey）", variant="primary")
                         llm_result = gr.Textbox(label="LLM Clipper Result")
                         with gr.Row():

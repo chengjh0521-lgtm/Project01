@@ -29,12 +29,18 @@ def openai_call(apikey,
     base_url = None
     if model.startswith("deepseek"):
         base_url = "https://api.deepseek.com"
+        apikey = apikey or os.environ.get("DEEPSEEK_API_KEY")
     elif model.startswith("gpt-3.5-turbo"):
         base_url = "https://api.moonshot.cn/v1"
+    else:
+        apikey = apikey or os.environ.get("OPENAI_API_KEY")
+    if not apikey:
+        return "API key is required. Paste your DeepSeek API key or set DEEPSEEK_API_KEY."
     client = OpenAI(
         # This is the default and can be omitted
         api_key=apikey,
-        base_url=base_url
+        base_url=base_url,
+        timeout=120.0,
     )
     if system_content is not None and len(system_content.strip()):
         messages = [
@@ -46,9 +52,13 @@ def openai_call(apikey,
             {'role': 'user', 'content': user_content}
       ]
     
-    chat_completion = client.chat.completions.create(
-        messages=messages,
-        model=model,
-    )
-    logging.info("Openai model inference done.")
-    return chat_completion.choices[0].message.content
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=messages,
+            model=model,
+        )
+        logging.info("OpenAI-compatible model inference done.")
+        return chat_completion.choices[0].message.content
+    except Exception as exc:
+        logging.exception("OpenAI-compatible model inference failed.")
+        return f"LLM inference failed: {exc}"

@@ -124,6 +124,48 @@ def extract_timestamps(input_text):
     return times_list
 
 
+def convert_time_to_millis(time_str):
+    parts = re.split(r"[:,.]", time_str.strip())
+    if len(parts) == 2:
+        hours = 0
+        minutes, seconds = map(int, parts)
+        milliseconds = 0
+    elif len(parts) == 3:
+        if len(parts[0]) <= 2 and len(parts[1]) == 2 and len(parts[2]) == 2:
+            hours, minutes, seconds = map(int, parts)
+            milliseconds = 0
+        else:
+            hours = 0
+            minutes, seconds = map(int, parts[:2])
+            milliseconds = int(parts[2].ljust(3, "0")[:3])
+    elif len(parts) == 4:
+        hours, minutes, seconds = map(int, parts[:3])
+        milliseconds = int(parts[3].ljust(3, "0")[:3])
+    else:
+        raise ValueError(f"Unsupported timestamp: {time_str}")
+    return (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds
+
+
+def extract_timestamps(input_text):
+    if input_text is None:
+        return []
+    time_pattern = r"\d{1,2}:\d{2}(?::\d{2})?(?:[,.]\d{1,3})?"
+    timestamps = re.findall(
+        rf"\[?\s*({time_pattern})\s*(?:-->|-|~|至|到)\s*({time_pattern})\s*\]?",
+        str(input_text),
+    )
+    times_list = []
+    for start_time, end_time in timestamps:
+        try:
+            start_millis = convert_time_to_millis(start_time)
+            end_millis = convert_time_to_millis(end_time)
+        except ValueError:
+            continue
+        if end_millis > start_millis:
+            times_list.append([start_millis, end_millis])
+    return times_list
+
+
 if __name__ == '__main__':
     text = ("1. [00:00:00,500-00:00:05,850] 在我们的设计普惠当中，有一个我经常津津乐道的项目叫寻找远方的美好。"
     "2. [00:00:07,120-00:00:12,940] 啊，在这样一个我们叫寻美在这样的一个项目当中，我们把它跟乡村振兴去结合起来，利用我们的设计的能力。"
