@@ -24,7 +24,6 @@ if os.environ.get("IMAGEMAGICK_BINARY") in (None, "", "unset"):
 
 from moviepy.editor import *
 import moviepy.editor as mpy
-from moviepy.video.tools.subtitles import SubtitlesClip
 from moviepy.editor import VideoFileClip, concatenate_videoclips
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from utils.subtitle_utils import generate_srt, generate_srt_clip, str2list
@@ -157,13 +156,26 @@ def _subtitle_image_clip(text, font_size, font_color, video_size):
     return ImageClip(np.array(image), transparent=True)
 
 
-def _with_subtitles(video_clip, subs, font_size, font_color):
-    generator = lambda txt: _subtitle_image_clip(txt, font_size, font_color, video_clip.size)
-    subtitles = SubtitlesClip(subs, generator)
-    return CompositeVideoClip(
-        [video_clip, subtitles.set_pos(('center', 'bottom'))],
-        size=video_clip.size,
-    )
+def _subtitle_position(video_size, subtitle_size, subtitle_x=50, subtitle_y=88):
+    video_width, video_height = video_size
+    subtitle_width, subtitle_height = subtitle_size
+    max_x = max(0, video_width - subtitle_width)
+    max_y = max(0, video_height - subtitle_height)
+    x = max_x * min(max(float(subtitle_x), 0.0), 100.0) / 100.0
+    y = max_y * min(max(float(subtitle_y), 0.0), 100.0) / 100.0
+    return x, y
+
+
+def _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x=50, subtitle_y=88):
+    subtitle_clips = []
+    for (start, end), text in subs:
+        subtitle_clip = _subtitle_image_clip(text, font_size, font_color, video_clip.size)
+        subtitle_clip = subtitle_clip.set_start(start).set_duration(max(0, end - start))
+        subtitle_clip = subtitle_clip.set_pos(
+            lambda _, clip=subtitle_clip: _subtitle_position(video_clip.size, clip.size, subtitle_x, subtitle_y)
+        )
+        subtitle_clips.append(subtitle_clip)
+    return CompositeVideoClip([video_clip, *subtitle_clips], size=video_clip.size)
 
 
 def _is_valid_timestamp(timestamp):
@@ -404,6 +416,8 @@ class VideoClipper():
                    state, 
                    font_size=32, 
                    font_color='white', 
+                   subtitle_x=50,
+                   subtitle_y=88,
                    add_sub=False, 
                    dest_spk=None, 
                    output_dir=None,
@@ -461,7 +475,7 @@ class VideoClipper():
             start_end_info = "from {} to {}".format(start, end)
             clip_srt += srt_clip
             if add_sub:
-                video_clip = _with_subtitles(video_clip, subs, font_size, font_color)
+                video_clip = _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x, subtitle_y)
             concate_clip = [video_clip]
             time_acc_ost += end - start
             for _ts in ts[1:]:
@@ -478,7 +492,7 @@ class VideoClipper():
                 start_end_info += ", from {} to {}".format(str(start)[:5], str(end)[:5])
                 clip_srt += srt_clip
                 if add_sub:
-                    _video_clip = _with_subtitles(_video_clip, chi_subs, font_size, font_color)
+                    _video_clip = _with_subtitles(_video_clip, chi_subs, font_size, font_color, subtitle_x, subtitle_y)
                     # _video_clip.write_videofile("debug.mp4", audio_codec="aac")
                 concate_clip.append(copy.copy(_video_clip))
                 time_acc_ost += end - start

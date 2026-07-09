@@ -17,8 +17,10 @@ from datetime import datetime
 from urllib.parse import unquote, urlparse
 import gradio as gr
 import requests
+from PIL import Image
 from funasr import AutoModel
-from videoclipper import VideoClipper
+from moviepy.editor import VideoFileClip
+from videoclipper import VideoClipper, _subtitle_image_clip, _subtitle_position
 from llm.openai_api import openai_call
 from llm.qwen_api import call_qwen_model
 from llm.g4f_openai_api import g4f_openai_call
@@ -398,7 +400,49 @@ if __name__ == "__main__":
                 dest_text, start_ost, end_ost, audio_state, dest_spk=video_spk_input, output_dir=output_dir)
             return None, (sr, res_audio), message, clip_srt
     
-    def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, output_dir, font_size, font_color):
+    def _preview_background_frame(local_video, video_input):
+        video_path = None
+        try:
+            video_path = resolve_local_video(local_video)
+        except Exception:
+            video_path = None
+        if video_path is None and isinstance(video_input, str) and os.path.isfile(video_input):
+            video_path = video_input
+
+        if video_path:
+            clip = None
+            try:
+                clip = VideoFileClip(video_path)
+                frame = clip.get_frame(min(1.0, max(0.0, (clip.duration or 1.0) * 0.1)))
+                image = Image.fromarray(frame).convert("RGBA")
+            finally:
+                if clip is not None:
+                    clip.close()
+        else:
+            image = Image.new("RGBA", (720, 1280), (0, 0, 0, 255))
+
+        max_height = 960
+        if image.height > max_height:
+            width = int(image.width * max_height / image.height)
+            image = image.resize((width, max_height), Image.LANCZOS)
+        return image
+
+    def preview_subtitle(local_video, video_input, sample_text, font_size, font_color, subtitle_x, subtitle_y):
+        background = _preview_background_frame(local_video, video_input)
+        sample_text = (sample_text or "").strip() or "这里是样例字幕，可调整大小和位置"
+        subtitle_clip = _subtitle_image_clip(sample_text, int(font_size), font_color, background.size)
+        subtitle_frame = subtitle_clip.get_frame(0)
+        subtitle_image = Image.fromarray(subtitle_frame).convert("RGBA")
+        if subtitle_clip.mask is not None:
+            alpha = subtitle_clip.mask.get_frame(0)
+            alpha_image = Image.fromarray((alpha * 255).astype("uint8"), mode="L")
+            subtitle_image.putalpha(alpha_image)
+        x, y = _subtitle_position(background.size, subtitle_image.size, subtitle_x, subtitle_y)
+        composed = background.copy()
+        composed.alpha_composite(subtitle_image, (int(x), int(y)))
+        return composed.convert("RGB")
+
+    def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, output_dir, font_size, font_color, subtitle_x, subtitle_y):
         output_dir = output_dir.strip()
         if not len(output_dir):
             output_dir = None
@@ -406,7 +450,8 @@ if __name__ == "__main__":
             output_dir = os.path.abspath(output_dir)
         return audio_clipper.video_clip(
             dest_text, start_ost, end_ost, state, 
-            font_size=font_size, font_color=font_color, 
+            font_size=font_size, font_color=font_color,
+            subtitle_x=subtitle_x, subtitle_y=subtitle_y,
             add_sub=True, dest_spk=video_spk_input, output_dir=output_dir
             )
         
@@ -458,10 +503,10 @@ if __name__ == "__main__":
         if audio_state is not None:
             (sr, res_audio), message, clip_srt = audio_clipper.clip(
                 dest_text, start_ost, end_ost, audio_state, 
-                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=False)
+                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list)
             return None, (sr, res_audio), message, clip_srt
     
-    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir):
+    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, font_size, font_color, subtitle_x, subtitle_y):
         timestamp_list = extract_timestamps(LLM_res)
         if not timestamp_list:
             message = "No timestamps found in LLM result. Please make sure the LLM output contains ranges like [00:01:20-00:02:20]."
@@ -474,12 +519,14 @@ if __name__ == "__main__":
         if video_state is not None:
             clip_video_file, message, clip_srt = audio_clipper.video_clip(
                 dest_text, start_ost, end_ost, video_state, 
+                font_size=font_size, font_color=font_color,
+                subtitle_x=subtitle_x, subtitle_y=subtitle_y,
                 dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=True)
             return clip_video_file, None, message, clip_srt
         if audio_state is not None:
             (sr, res_audio), message, clip_srt = audio_clipper.clip(
                 dest_text, start_ost, end_ost, audio_state, 
-                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=True)
+                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list)
             return None, (sr, res_audio), message, clip_srt
     
     # gradio interface
@@ -602,6 +649,15 @@ if __name__ == "__main__":
                     font_size = gr.Slider(minimum=10, maximum=100, value=32, step=2, label="🔠 字幕字体大小 | Subtitle Font Size")
                     font_color = gr.Radio(["black", "white", "green", "red"], label="🌈 字幕颜色 | Subtitle Color", value='white')
                     # font = gr.Radio(["黑体", "Alibaba Sans"], label="字体 Font")
+                with gr.Row():
+                    subtitle_x = gr.Slider(minimum=0, maximum=100, value=50, step=1, label="Subtitle X")
+                    subtitle_y = gr.Slider(minimum=0, maximum=100, value=88, step=1, label="Subtitle Y")
+                subtitle_sample_text = gr.Textbox(
+                    label="Subtitle Preview Text",
+                    value="这里是样例字幕，可调整大小和位置",
+                )
+                subtitle_preview_button = gr.Button("Preview Subtitle")
+                subtitle_preview_image = gr.Image(label="Subtitle Position Preview", interactive=False)
                 video_output = gr.Video(label="裁剪结果 | Video Clipped", height=640, elem_classes=["video-preserve"])
                 audio_output = gr.Audio(label="裁剪结果 | Audio Clipped")
                 clip_message = gr.Textbox(label="⚠️ 裁剪信息 | Clipping Log")
@@ -643,6 +699,10 @@ if __name__ == "__main__":
                             query_asr_task,
                             inputs=[asr_job_id],
                             outputs=[asr_task_status, video_text_output, video_srt_output, video_state, audio_state, video_text_file, video_srt_file, asr_job_id])
+        subtitle_preview_button.click(
+                            preview_subtitle,
+                            inputs=[local_video_input, video_input, subtitle_sample_text, font_size, font_color, subtitle_x, subtitle_y],
+                            outputs=[subtitle_preview_image])
         clip_button.click(mix_clip, 
                            inputs=[video_text_input, 
                                    video_spk_input, 
@@ -662,6 +722,8 @@ if __name__ == "__main__":
                                    output_dir, 
                                    font_size, 
                                    font_color,
+                                   subtitle_x,
+                                   subtitle_y,
                                    ], 
                            outputs=[video_output, clip_message, srt_clipped])
         llm_button.click(llm_inference,
@@ -687,6 +749,10 @@ if __name__ == "__main__":
                                    video_state, 
                                    audio_state, 
                                    output_dir,
+                                   font_size,
+                                   font_color,
+                                   subtitle_x,
+                                   subtitle_y,
                                    ],
                            outputs=[video_output, audio_output, clip_message, srt_clipped])
     

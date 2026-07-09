@@ -93,3 +93,9 @@ The server script binds Gradio to `0.0.0.0`, so place it behind your reverse pro
 `ASR` and `ASR+SD` start background jobs and return an `ASR Job ID` immediately. The web page polls the job every 10 seconds, and you can also click `Query ASR Task` manually.
 
 This avoids browser or reverse-proxy timeouts during long speech recognition. Keep the backend process running until the task reports `Done`; then the transcript, SRT, and download files are loaded into the page. If the page reloads, paste the job id back into `ASR Job ID` and click `Query ASR Task`.
+
+## Subtitle Preview
+
+Use `Subtitle Preview Text`, `Subtitle Font Size`, `Subtitle Color`, `Subtitle X`, and `Subtitle Y` to preview burned-in subtitles before clipping.
+
+Click `Preview Subtitle` after selecting a server local video or uploading a video. The same subtitle size, color, and position are used by `Clip+Subtitles` and `AI Clip+Subtitles`.
