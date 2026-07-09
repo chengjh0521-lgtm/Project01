@@ -286,10 +286,15 @@ def _parse_sound_effect_rules(sound_effect_rules, sound_effect_dir=None):
         return rules
 
     base_dir = os.path.abspath(sound_effect_dir) if sound_effect_dir else None
+    project_music_dir = None
+    if base_dir:
+        project_music_dir = os.path.abspath(
+            os.environ.get("FUNCLIP_MUSIC_DIR") or os.path.join(os.path.dirname(base_dir), "music")
+        )
     allowed_dirs = []
     if base_dir:
         allowed_dirs.append(base_dir)
-        allowed_dirs.append(os.path.abspath(os.path.join(os.path.dirname(base_dir), "music")))
+        allowed_dirs.append(project_music_dir)
     for line in str(sound_effect_rules).splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -304,7 +309,8 @@ def _parse_sound_effect_rules(sound_effect_rules, sound_effect_dir=None):
         if base_dir and not os.path.isabs(effect_path):
             effect_path = os.path.abspath(os.path.join(base_dir, effect_path))
             if not os.path.isfile(effect_path) and raw_effect_path.replace("\\", "/").startswith("music/"):
-                effect_path = os.path.abspath(os.path.join(os.path.dirname(base_dir), raw_effect_path))
+                rel_music_path = raw_effect_path.replace("\\", "/")[len("music/"):]
+                effect_path = os.path.abspath(os.path.join(project_music_dir, rel_music_path))
         else:
             effect_path = os.path.abspath(effect_path)
         if allowed_dirs and not any(

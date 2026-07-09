@@ -58,10 +58,14 @@ Runtime files are intentionally ignored by Git:
 For generated clips, set `File Output Dir` in the UI to:
 
 ```text
-D:\pandas_project\pandagent\FunClip\output
+/opt/funclip-project01/output
 ```
 
-On a server, change this path to a writable directory with enough disk space.
+On Windows local development, use your local repository path instead, for example:
+
+```text
+D:\pandas_project\pandagent\FunClip\output
+```
 
 ## Server Local Videos
 
@@ -81,19 +85,37 @@ Then open the web UI, click `Refresh Local Videos`, choose the video from `Serve
 
 ## Server Sound Effects
 
-Place reusable sound effects in:
+On the server, place reusable sound effects in either of these project-root folders:
 
 ```text
-local_sfx/
+/opt/funclip-project01/local_sfx/
+/opt/funclip-project01/music/
 ```
 
 Example:
 
 ```bash
 scp ./ding.mp3 root@your-server:/opt/funclip-project01/local_sfx/
+scp -r ./music root@your-server:/opt/funclip-project01/music
 ```
 
-If you already have a `music/` folder under the project root, the UI also scans it recursively. Open the web UI and click `Refresh Sound Effects` to see available files.
+The UI scans both folders recursively. Open the web UI and click `Refresh Sound Effects` to see available files. The read-only `Sound Effect Folders` box shows the absolute folders the running service is reading.
+
+If your `music/` folder is somewhere else, set it explicitly before starting the service:
+
+```bash
+cd /opt/funclip-project01
+export FUNCLIP_MUSIC_DIR=/opt/funclip-project01/music
+export FUNCLIP_LOCAL_SFX_DIR=/opt/funclip-project01/local_sfx
+PORT=7860 ./start_funclip_server.sh
+```
+
+Quick server check:
+
+```bash
+ls -lah /opt/funclip-project01/music
+find /opt/funclip-project01/music -type f | head
+```
 
 Choose one sound effect from `Server Sound Effects`, then enter trigger words for that sound effect in `Selected Sound Effect Trigger Words`. Use commas or new lines:
 

@@ -33,8 +33,12 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir
 LOCAL_TMP_DIR = os.path.join(PROJECT_ROOT, "tmp")
 LOCAL_GRADIO_TMP_DIR = os.path.join(PROJECT_ROOT, "gradio_tmp")
 LOCAL_VIDEO_DIR = os.path.join(PROJECT_ROOT, "local_videos")
-LOCAL_SFX_DIR = os.path.join(PROJECT_ROOT, "local_sfx")
-LEGACY_MUSIC_DIR = os.path.join(PROJECT_ROOT, "music")
+LOCAL_SFX_DIR = os.path.abspath(
+    os.environ.get("FUNCLIP_LOCAL_SFX_DIR") or os.path.join(PROJECT_ROOT, "local_sfx")
+)
+LEGACY_MUSIC_DIR = os.path.abspath(
+    os.environ.get("FUNCLIP_MUSIC_DIR") or os.path.join(PROJECT_ROOT, "music")
+)
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 USER_SETTINGS_PATH = os.path.join(PROJECT_ROOT, "user_settings.json")
 ASR_TASKS = {}
@@ -166,11 +170,19 @@ if __name__ == "__main__":
                 choices.append(rel_path)
         return sorted(choices)
 
-    def list_local_sfx():
-        choices = []
+    def sound_effect_scan_roots():
         search_roots = [(LOCAL_SFX_DIR, "")]
         if os.path.isdir(LEGACY_MUSIC_DIR):
             search_roots.append((LEGACY_MUSIC_DIR, "music/"))
+        return search_roots
+
+    def sound_effect_folder_hint():
+        roots = [root for root, _ in sound_effect_scan_roots()]
+        return "\n".join(roots)
+
+    def list_local_sfx():
+        choices = []
+        search_roots = sound_effect_scan_roots()
         for search_root, prefix in search_roots:
             for root, _, files in os.walk(search_root):
                 for name in files:
@@ -934,6 +946,12 @@ if __name__ == "__main__":
                 )
                 sound_effect_choices = list_local_sfx()
                 selected_sound_effect = sound_effect_choices[0] if sound_effect_choices else None
+                sound_effect_dirs = gr.Textbox(
+                    label="Sound Effect Folders",
+                    value=sound_effect_folder_hint(),
+                    interactive=False,
+                    lines=2,
+                )
                 with gr.Row():
                     local_sfx_list = gr.Dropdown(
                         choices=sound_effect_choices,
