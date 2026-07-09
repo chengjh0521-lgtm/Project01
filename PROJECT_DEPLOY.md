@@ -132,6 +132,8 @@ sound_file | trigger words | volume | cooldown seconds
 
 `Save Settings` saves these bindings to `user_settings.json`. The bindings are applied to video clipping outputs, including `Clip`, `Clip+Subtitles`, `AI Clip`, and `AI Clip+Subtitles`.
 
+Sound effects are timed to the trigger word position inside the subtitle line. For example, if a trigger word appears near the end of a 6-second subtitle, the sound effect is placed near the end of that subtitle instead of always at the subtitle start.
+
 ## Server Mode
 
 Windows:

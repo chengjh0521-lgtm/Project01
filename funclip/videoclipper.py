@@ -343,6 +343,41 @@ def _parse_sound_effect_rules(sound_effect_rules, sound_effect_dir=None):
     return rules
 
 
+def _sound_effect_trigger_times(start, end, text, terms):
+    text = str(text or "")
+    text_lower = text.lower()
+    if not text_lower:
+        return []
+
+    duration = max(0.0, float(end) - float(start))
+    if duration <= 0:
+        return []
+
+    triggers = []
+    seen = set()
+    text_len = max(1, len(text_lower))
+    for term in terms:
+        term_lower = str(term or "").strip().lower()
+        if not term_lower:
+            continue
+
+        search_from = 0
+        while True:
+            index = text_lower.find(term_lower, search_from)
+            if index < 0:
+                break
+
+            key = (index, term_lower)
+            if key not in seen:
+                seen.add(key)
+                ratio = max(0.0, min(1.0, index / text_len))
+                triggers.append((float(start) + duration * ratio, term_lower))
+
+            search_from = index + max(1, len(term_lower))
+
+    return sorted(triggers, key=lambda item: item[0])
+
+
 def _with_sound_effects(video_clip, subs, sound_effect_rules=None, sound_effect_dir=None):
     rules = _parse_sound_effect_rules(sound_effect_rules, sound_effect_dir)
     if not rules or not subs:
@@ -355,29 +390,27 @@ def _with_sound_effects(video_clip, subs, sound_effect_rules=None, sound_effect_
     trigger_count = 0
     last_trigger_by_path = {}
     for (start, end), text in subs:
-        text_lower = str(text or "").lower()
         for rule in rules:
-            if not any(term.lower() in text_lower for term in rule["terms"]):
-                continue
-            last_trigger = last_trigger_by_path.get(rule["path"])
-            if last_trigger is not None and start - last_trigger < rule["cooldown"]:
-                continue
-            if start >= video_clip.duration:
-                continue
+            for trigger_start, _ in _sound_effect_trigger_times(start, end, text, rule["terms"]):
+                last_trigger = last_trigger_by_path.get(rule["path"])
+                if last_trigger is not None and trigger_start - last_trigger < rule["cooldown"]:
+                    continue
+                if trigger_start >= video_clip.duration:
+                    continue
 
-            available_duration = video_clip.duration - start
-            if available_duration <= 0.05:
-                continue
-            try:
-                effect_clip = AudioFileClip(rule["path"]).volumex(rule["volume"])
-            except Exception:
-                logging.exception("Failed to load sound effect: %s", rule["path"])
-                continue
-            if effect_clip.duration > available_duration:
-                effect_clip = effect_clip.subclip(0, available_duration)
-            audio_clips.append(effect_clip.set_start(start))
-            last_trigger_by_path[rule["path"]] = start
-            trigger_count += 1
+                available_duration = video_clip.duration - trigger_start
+                if available_duration <= 0.05:
+                    continue
+                try:
+                    effect_clip = AudioFileClip(rule["path"]).volumex(rule["volume"])
+                except Exception:
+                    logging.exception("Failed to load sound effect: %s", rule["path"])
+                    continue
+                if effect_clip.duration > available_duration:
+                    effect_clip = effect_clip.subclip(0, available_duration)
+                audio_clips.append(effect_clip.set_start(trigger_start))
+                last_trigger_by_path[rule["path"]] = trigger_start
+                trigger_count += 1
 
     if trigger_count == 0:
         return video_clip, 0
