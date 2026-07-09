@@ -93,14 +93,16 @@ Example:
 scp ./ding.mp3 root@your-server:/opt/funclip-project01/local_sfx/
 ```
 
-Open the web UI and click `Refresh Sound Effects` to see available files. Bind sound effects to trigger words in `Sound Effect Word Bindings`:
+If you already have a `music/` folder under the project root, the UI also scans it recursively. Open the web UI and click `Refresh Sound Effects` to see available files.
+
+Choose one sound effect from `Server Sound Effects`, then enter trigger words for that sound effect in `Selected Sound Effect Trigger Words`. Use commas or new lines:
 
 ```text
-ding.mp3 | 糖尿病,戒烟 | 0.35 | 2
-warning.mp3 | 心梗脑梗,癌症 | 0.4 | 3
+糖尿病,戒烟
+心梗脑梗
 ```
 
-Format:
+When you switch to another sound effect, the trigger word box automatically switches to that sound effect's saved words. Internally the app stores bindings in this format:
 
 ```text
 sound_file | trigger words | volume | cooldown seconds

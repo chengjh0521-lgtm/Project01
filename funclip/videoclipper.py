@@ -286,6 +286,10 @@ def _parse_sound_effect_rules(sound_effect_rules, sound_effect_dir=None):
         return rules
 
     base_dir = os.path.abspath(sound_effect_dir) if sound_effect_dir else None
+    allowed_dirs = []
+    if base_dir:
+        allowed_dirs.append(base_dir)
+        allowed_dirs.append(os.path.abspath(os.path.join(os.path.dirname(base_dir), "music")))
     for line in str(sound_effect_rules).splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -296,12 +300,17 @@ def _parse_sound_effect_rules(sound_effect_rules, sound_effect_dir=None):
             continue
 
         effect_path = parts[0]
+        raw_effect_path = effect_path
         if base_dir and not os.path.isabs(effect_path):
             effect_path = os.path.abspath(os.path.join(base_dir, effect_path))
+            if not os.path.isfile(effect_path) and raw_effect_path.replace("\\", "/").startswith("music/"):
+                effect_path = os.path.abspath(os.path.join(os.path.dirname(base_dir), raw_effect_path))
         else:
             effect_path = os.path.abspath(effect_path)
-        if base_dir and not effect_path.startswith(base_dir + os.sep) and effect_path != base_dir:
-            logging.warning("Skip sound effect outside local_sfx: %s", effect_path)
+        if allowed_dirs and not any(
+                effect_path.startswith(allowed_dir + os.sep) or effect_path == allowed_dir
+                for allowed_dir in allowed_dirs):
+            logging.warning("Skip sound effect outside allowed sound effect directories: %s", effect_path)
             continue
         if not os.path.isfile(effect_path):
             logging.warning("Skip missing sound effect file: %s", effect_path)

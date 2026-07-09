@@ -34,6 +34,7 @@ LOCAL_TMP_DIR = os.path.join(PROJECT_ROOT, "tmp")
 LOCAL_GRADIO_TMP_DIR = os.path.join(PROJECT_ROOT, "gradio_tmp")
 LOCAL_VIDEO_DIR = os.path.join(PROJECT_ROOT, "local_videos")
 LOCAL_SFX_DIR = os.path.join(PROJECT_ROOT, "local_sfx")
+LEGACY_MUSIC_DIR = os.path.join(PROJECT_ROOT, "music")
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 USER_SETTINGS_PATH = os.path.join(PROJECT_ROOT, "user_settings.json")
 ASR_TASKS = {}
@@ -67,9 +68,10 @@ DEFAULT_HIGHLIGHT_PROMPT = (
 )
 DEFAULT_HIGHLIGHT_COUNT = 30
 DEFAULT_SOUND_EFFECT_RULES = (
-    "# Format: sound_file | trigger words | volume | cooldown seconds\n"
-    "# Example: ding.mp3 | 糖尿病,戒烟 | 0.35 | 2\n"
+    "# Select a sound effect above, then enter trigger words for that sound effect.\n"
 )
+DEFAULT_SOUND_EFFECT_VOLUME = 0.35
+DEFAULT_SOUND_EFFECT_COOLDOWN = 2
 
 
 def load_user_settings():
@@ -166,13 +168,17 @@ if __name__ == "__main__":
 
     def list_local_sfx():
         choices = []
-        for root, _, files in os.walk(LOCAL_SFX_DIR):
-            for name in files:
-                if not name.lower().endswith(SFX_EXTENSIONS):
-                    continue
-                path = os.path.join(root, name)
-                rel_path = os.path.relpath(path, LOCAL_SFX_DIR).replace(os.sep, "/")
-                choices.append(rel_path)
+        search_roots = [(LOCAL_SFX_DIR, "")]
+        if os.path.isdir(LEGACY_MUSIC_DIR):
+            search_roots.append((LEGACY_MUSIC_DIR, "music/"))
+        for search_root, prefix in search_roots:
+            for root, _, files in os.walk(search_root):
+                for name in files:
+                    if not name.lower().endswith(SFX_EXTENSIONS):
+                        continue
+                    path = os.path.join(root, name)
+                    rel_path = os.path.relpath(path, search_root).replace(os.sep, "/")
+                    choices.append(prefix + rel_path)
         return sorted(choices)
 
     def resolve_local_video(local_video):
@@ -222,8 +228,70 @@ if __name__ == "__main__":
     def refresh_local_videos():
         return gr.update(choices=list_local_videos())
 
-    def refresh_local_sfx():
-        return gr.update(choices=list_local_sfx())
+    def refresh_local_sfx(sound_effect_rules):
+        choices = list_local_sfx()
+        selected = choices[0] if choices else None
+        return gr.update(choices=choices, value=selected), load_sound_effect_terms(selected, sound_effect_rules)
+
+    def _parse_sound_effect_bindings(sound_effect_rules):
+        bindings = {}
+        for line in str(sound_effect_rules or "").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [part.strip() for part in line.split("|")]
+            if len(parts) < 2 or not parts[0]:
+                continue
+            try:
+                volume = float(parts[2]) if len(parts) >= 3 and parts[2] else DEFAULT_SOUND_EFFECT_VOLUME
+            except ValueError:
+                volume = DEFAULT_SOUND_EFFECT_VOLUME
+            try:
+                cooldown = float(parts[3]) if len(parts) >= 4 and parts[3] else DEFAULT_SOUND_EFFECT_COOLDOWN
+            except ValueError:
+                cooldown = DEFAULT_SOUND_EFFECT_COOLDOWN
+            bindings[parts[0]] = {
+                "terms": parts[1],
+                "volume": max(0.0, min(volume, 2.0)),
+                "cooldown": max(0.0, cooldown),
+            }
+        return bindings
+
+    def _format_sound_effect_bindings(bindings):
+        lines = []
+        for sound_file in sorted(bindings):
+            binding = bindings[sound_file]
+            terms = str(binding.get("terms") or "").strip()
+            if not terms:
+                continue
+            volume = binding.get("volume", DEFAULT_SOUND_EFFECT_VOLUME)
+            cooldown = binding.get("cooldown", DEFAULT_SOUND_EFFECT_COOLDOWN)
+            lines.append(f"{sound_file} | {terms} | {volume:g} | {cooldown:g}")
+        return "\n".join(lines)
+
+    def _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_terms):
+        bindings = _parse_sound_effect_bindings(sound_effect_rules)
+        selected_sfx = (selected_sfx or "").strip()
+        selected_terms = (selected_terms or "").strip()
+        if selected_sfx:
+            if selected_terms:
+                current = bindings.get(selected_sfx) or {}
+                bindings[selected_sfx] = {
+                    "terms": selected_terms,
+                    "volume": current.get("volume", DEFAULT_SOUND_EFFECT_VOLUME),
+                    "cooldown": current.get("cooldown", DEFAULT_SOUND_EFFECT_COOLDOWN),
+                }
+            elif selected_sfx in bindings:
+                del bindings[selected_sfx]
+        return _format_sound_effect_bindings(bindings)
+
+    def load_sound_effect_terms(selected_sfx, sound_effect_rules):
+        bindings = _parse_sound_effect_bindings(sound_effect_rules)
+        binding = bindings.get((selected_sfx or "").strip()) or {}
+        return binding.get("terms", "")
+
+    def update_sound_effect_terms(selected_sfx, selected_terms, sound_effect_rules):
+        return _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_terms)
 
     def _srt_time_to_millis(time_text):
         time_text = (time_text or "").strip().replace(",", ".")
@@ -352,8 +420,9 @@ if __name__ == "__main__":
     def save_llm_settings(
             prompt_system, prompt_user, model, apikey, highlight_prompt,
             highlight_count, font_size, font_color, subtitle_x, subtitle_y, highlight_color,
-            sound_effect_rules):
+            sound_effect_rules, selected_sfx, selected_sfx_terms):
         settings = load_user_settings()
+        sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
         try:
             saved_highlight_count = max(1, int(float(highlight_count or DEFAULT_HIGHLIGHT_COUNT)))
         except (TypeError, ValueError):
@@ -531,8 +600,9 @@ if __name__ == "__main__":
             return f"Failed. Job ID: {job_id}\n{message}\n{detail[-2000:]}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
         return f"{status.title()}. Job ID: {job_id}\n{message}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
     
-    def mix_clip(dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, sound_effect_rules):
+    def mix_clip(dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, sound_effect_rules, selected_sfx, selected_sfx_terms):
         output_dir = output_dir.strip()
+        sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
         if not len(output_dir):
             output_dir = None
         else:
@@ -589,8 +659,9 @@ if __name__ == "__main__":
         composed.alpha_composite(subtitle_image, (int(x), int(y)))
         return composed.convert("RGB")
 
-    def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules):
+    def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
         output_dir = output_dir.strip()
+        sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
         if not len(output_dir):
             output_dir = None
         else:
@@ -667,8 +738,9 @@ if __name__ == "__main__":
             return g4f_openai_call("-".join(model.split('-')[1:]), system_content, user_content)
         return "Please choose a deepseek, qwen, gpt, moonshot, or g4f model to generate subtitle highlights."
 
-    def AI_clip(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, sound_effect_rules):
+    def AI_clip(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, sound_effect_rules, selected_sfx, selected_sfx_terms):
         timestamp_list = extract_timestamps(LLM_res)
+        sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
         if not timestamp_list:
             message = "No timestamps found in LLM result. Please make sure the LLM output contains ranges like [00:01:20-00:02:20]."
             return None, None, message, ""
@@ -689,8 +761,9 @@ if __name__ == "__main__":
                 dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list)
             return None, (sr, res_audio), message, clip_srt
     
-    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules):
+    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
         timestamp_list = extract_timestamps(LLM_res)
+        sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
         if not timestamp_list:
             message = "No timestamps found in LLM result. Please make sure the LLM output contains ranges like [00:01:20-00:02:20]."
             return None, None, message, ""
@@ -859,18 +932,26 @@ if __name__ == "__main__":
                     placeholder="One term per line. You can also separate terms with commas.",
                     lines=4,
                 )
+                sound_effect_choices = list_local_sfx()
+                selected_sound_effect = sound_effect_choices[0] if sound_effect_choices else None
                 with gr.Row():
                     local_sfx_list = gr.Dropdown(
-                        choices=list_local_sfx(),
-                        label="Server Sound Effects | local_sfx/",
-                        interactive=False,
+                        choices=sound_effect_choices,
+                        value=selected_sound_effect,
+                        label="Server Sound Effects | local_sfx/ and music/",
+                        interactive=True,
                     )
                     refresh_local_sfx_button = gr.Button("Refresh Sound Effects")
+                selected_sfx_terms = gr.Textbox(
+                    label="Selected Sound Effect Trigger Words",
+                    value=load_sound_effect_terms(selected_sound_effect, user_settings.get("sound_effect_rules") or ""),
+                    placeholder="糖尿病,戒烟\n心梗脑梗",
+                    lines=4,
+                )
                 sound_effect_rules = gr.Textbox(
                     label="Sound Effect Word Bindings",
                     value=user_settings.get("sound_effect_rules") or DEFAULT_SOUND_EFFECT_RULES,
-                    placeholder="ding.mp3 | 糖尿病,戒烟 | 0.35 | 2",
-                    lines=6,
+                    visible=False,
                 )
                 subtitle_preview_button = gr.Button("Preview Subtitle")
                 subtitle_preview_image = gr.Image(label="Subtitle Position Preview", interactive=False)
@@ -885,8 +966,16 @@ if __name__ == "__main__":
                             outputs=[local_video_input])
         refresh_local_sfx_button.click(
                             refresh_local_sfx,
-                            inputs=[],
-                            outputs=[local_sfx_list])
+                            inputs=[sound_effect_rules],
+                            outputs=[local_sfx_list, selected_sfx_terms])
+        local_sfx_list.change(
+                            load_sound_effect_terms,
+                            inputs=[local_sfx_list, sound_effect_rules],
+                            outputs=[selected_sfx_terms])
+        selected_sfx_terms.change(
+                            update_sound_effect_terms,
+                            inputs=[local_sfx_list, selected_sfx_terms, sound_effect_rules],
+                            outputs=[sound_effect_rules])
         download_video_button.click(
                             download_video_from_url,
                             inputs=[video_url_input],
@@ -895,7 +984,7 @@ if __name__ == "__main__":
                             save_llm_settings,
                             inputs=[prompt_head, prompt_head2, llm_model, apikey_input, highlight_prompt,
                                     highlight_count, font_size, font_color, subtitle_x, subtitle_y, highlight_color,
-                                    sound_effect_rules],
+                                    sound_effect_rules, local_sfx_list, selected_sfx_terms],
                             outputs=[save_settings_status])
         recog_button.click(start_asr_task,
                             inputs=[local_video_input,
@@ -933,7 +1022,9 @@ if __name__ == "__main__":
                                    video_state, 
                                    audio_state, 
                                    output_dir,
-                                   sound_effect_rules
+                                   sound_effect_rules,
+                                   local_sfx_list,
+                                   selected_sfx_terms
                                    ],
                            outputs=[video_output, audio_output, clip_message, srt_clipped])
         clip_subti_button.click(video_clip_addsub, 
@@ -950,6 +1041,8 @@ if __name__ == "__main__":
                                    highlight_terms,
                                    highlight_color,
                                    sound_effect_rules,
+                                   local_sfx_list,
+                                   selected_sfx_terms,
                                    ], 
                            outputs=[video_output, clip_message, srt_clipped])
         llm_button.click(llm_inference,
@@ -968,6 +1061,8 @@ if __name__ == "__main__":
                                    audio_state, 
                                    output_dir,
                                    sound_effect_rules,
+                                   local_sfx_list,
+                                   selected_sfx_terms,
                                    ],
                            outputs=[video_output, audio_output, clip_message, srt_clipped])
         llm_clip_subti_button.click(AI_clip_subti, 
@@ -986,6 +1081,8 @@ if __name__ == "__main__":
                                    highlight_terms,
                                    highlight_color,
                                    sound_effect_rules,
+                                   local_sfx_list,
+                                   selected_sfx_terms,
                                    ],
                            outputs=[video_output, audio_output, clip_message, srt_clipped])
     
