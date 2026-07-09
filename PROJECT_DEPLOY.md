@@ -87,3 +87,9 @@ PORT=7860 ./start_funclip_server.sh
 ```
 
 The server script binds Gradio to `0.0.0.0`, so place it behind your reverse proxy or firewall as needed.
+
+## Background ASR Tasks
+
+`ASR` and `ASR+SD` start background jobs and return an `ASR Job ID` immediately. The web page polls the job every 10 seconds, and you can also click `Query ASR Task` manually.
+
+This avoids browser or reverse-proxy timeouts during long speech recognition. Keep the backend process running until the task reports `Done`; then the transcript, SRT, and download files are loaded into the page. If the page reloads, paste the job id back into `ASR Job ID` and click `Query ASR Task`.

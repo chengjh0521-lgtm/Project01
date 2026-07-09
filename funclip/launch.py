@@ -9,7 +9,10 @@ import os
 import re
 import logging
 import argparse
+import shutil
 import tempfile
+import threading
+import traceback
 from datetime import datetime
 from urllib.parse import unquote, urlparse
 import gradio as gr
@@ -30,6 +33,9 @@ LOCAL_GRADIO_TMP_DIR = os.path.join(PROJECT_ROOT, "gradio_tmp")
 LOCAL_VIDEO_DIR = os.path.join(PROJECT_ROOT, "local_videos")
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 USER_SETTINGS_PATH = os.path.join(PROJECT_ROOT, "user_settings.json")
+ASR_TASKS = {}
+ASR_TASK_LOCK = threading.Lock()
+ASR_RUN_LOCK = threading.Lock()
 os.makedirs(LOCAL_TMP_DIR, exist_ok=True)
 os.makedirs(LOCAL_GRADIO_TMP_DIR, exist_ok=True)
 os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
@@ -274,6 +280,108 @@ if __name__ == "__main__":
             text_file = save_text_to_file(res_text, 'txt', output_dir)
             srt_file = save_text_to_file(res_srt, 'srt', output_dir)
             return res_text, res_srt, None, audio_state, text_file, srt_file
+
+    def _copy_video_input_for_background(video_input, job_id):
+        if not video_input or not isinstance(video_input, str) or not os.path.isfile(video_input):
+            return video_input
+        _, ext = os.path.splitext(video_input)
+        safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", job_id)
+        copied_path = os.path.join(LOCAL_TMP_DIR, f"asr_{safe_name}{ext or '.mp4'}")
+        shutil.copy2(video_input, copied_path)
+        return copied_path
+
+    def _set_asr_task(job_id, **updates):
+        with ASR_TASK_LOCK:
+            task = ASR_TASKS.setdefault(job_id, {})
+            task.update(updates)
+
+    def _get_asr_task(job_id):
+        with ASR_TASK_LOCK:
+            return dict(ASR_TASKS.get(job_id) or {})
+
+    def _run_asr_task(job_id, speaker_mode, local_video, video_input, audio_input, hotwords, output_dir):
+        _set_asr_task(job_id, status="queued", message="Queued. Waiting for the ASR worker.")
+        try:
+            with ASR_RUN_LOCK:
+                _set_asr_task(job_id, status="running", message="Running ASR in the background. This may take several minutes.")
+                result = (
+                    mix_recog_speaker(local_video, video_input, audio_input, hotwords, output_dir)
+                    if speaker_mode
+                    else mix_recog(local_video, video_input, audio_input, hotwords, output_dir)
+                )
+            if result is None:
+                raise ValueError("No local video, uploaded video, or audio input was provided.")
+            _set_asr_task(
+                job_id,
+                status="done",
+                message="ASR completed. Click Query ASR Task to load results if they are not shown yet.",
+                result=result,
+                finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+        except Exception as exc:
+            logging.exception("ASR background task failed: %s", job_id)
+            _set_asr_task(
+                job_id,
+                status="failed",
+                message=f"ASR failed: {exc}",
+                traceback=traceback.format_exc(),
+                finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+
+    def _start_asr_task(local_video, video_input, audio_input, hotwords, output_dir, speaker_mode=False):
+        if not local_video and video_input is None and audio_input is None:
+            return "Please choose a server local video, uploaded video, or audio first.", "", "", None, None, None, None, ""
+
+        job_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        copied_video_input = _copy_video_input_for_background(video_input, job_id)
+        _set_asr_task(
+            job_id,
+            status="starting",
+            message="Starting ASR background task.",
+            created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        thread = threading.Thread(
+            target=_run_asr_task,
+            args=(job_id, speaker_mode, local_video, copied_video_input, audio_input, hotwords, output_dir),
+            daemon=True,
+        )
+        thread.start()
+        mode_name = "ASR+SD" if speaker_mode else "ASR"
+        return (
+            f"{mode_name} task started. Job ID: {job_id}\nThe backend will continue running. Use Query ASR Task to load the result.",
+            "",
+            "",
+            None,
+            None,
+            None,
+            None,
+            job_id,
+        )
+
+    def start_asr_task(local_video, video_input, audio_input, hotwords, output_dir):
+        return _start_asr_task(local_video, video_input, audio_input, hotwords, output_dir, speaker_mode=False)
+
+    def start_asr_speaker_task(local_video, video_input, audio_input, hotwords, output_dir):
+        return _start_asr_task(local_video, video_input, audio_input, hotwords, output_dir, speaker_mode=True)
+
+    def query_asr_task(job_id):
+        job_id = (job_id or "").strip()
+        if not job_id:
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
+
+        task = _get_asr_task(job_id)
+        if not task:
+            return f"ASR task not found: {job_id}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
+
+        status = task.get("status", "unknown")
+        message = task.get("message", "")
+        if status == "done":
+            res_text, res_srt, video_state, audio_state, text_file, srt_file = task.get("result")
+            return f"Done. Job ID: {job_id}\n{message}", res_text, res_srt, video_state, audio_state, text_file, srt_file, job_id
+        if status == "failed":
+            detail = task.get("traceback") or ""
+            return f"Failed. Job ID: {job_id}\n{message}\n{detail[-2000:]}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
+        return f"{status.title()}. Job ID: {job_id}\n{message}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
     
     def mix_clip(dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir):
         output_dir = output_dir.strip()
@@ -394,6 +502,7 @@ if __name__ == "__main__":
         gr.Markdown(top_md_3)
         gr.Markdown(top_md_4)
         video_state, audio_state = gr.State(), gr.State()
+        asr_task_timer = gr.Timer(value=10)
         with gr.Row():
             with gr.Column():
                 with gr.Row():
@@ -431,6 +540,9 @@ if __name__ == "__main__":
                         with gr.Row():
                             recog_button = gr.Button("👂 识别 | ASR", variant="primary")
                             recog_button2 = gr.Button("👂👫 识别+区分说话人 | ASR+SD")
+                            query_asr_button = gr.Button("Query ASR Task")
+                        asr_job_id = gr.Textbox(label="ASR Job ID", interactive=True)
+                        asr_task_status = gr.Textbox(label="后台识别任务状态 | ASR Background Task Status", interactive=False)
                 video_text_output = gr.Textbox(label="✏️ 识别结果 | Recognition Result")
                 video_srt_output = gr.Textbox(label="📖 SRT字幕内容 | RST Subtitles")
                 with gr.Row():
@@ -507,22 +619,30 @@ if __name__ == "__main__":
                             save_llm_settings,
                             inputs=[prompt_head, prompt_head2, llm_model, apikey_input],
                             outputs=[save_settings_status])
-        recog_button.click(mix_recog, 
+        recog_button.click(start_asr_task,
                             inputs=[local_video_input,
                                     video_input, 
                                     audio_input, 
                                     hotwords_input, 
                                     output_dir,
                                     ], 
-                            outputs=[video_text_output, video_srt_output, video_state, audio_state, video_text_file, video_srt_file])
-        recog_button2.click(mix_recog_speaker, 
+                            outputs=[asr_task_status, video_text_output, video_srt_output, video_state, audio_state, video_text_file, video_srt_file, asr_job_id])
+        recog_button2.click(start_asr_speaker_task,
                             inputs=[local_video_input,
                                     video_input, 
                                     audio_input, 
                                     hotwords_input, 
                                     output_dir,
                                     ], 
-                            outputs=[video_text_output, video_srt_output, video_state, audio_state, video_text_file, video_srt_file])
+                            outputs=[asr_task_status, video_text_output, video_srt_output, video_state, audio_state, video_text_file, video_srt_file, asr_job_id])
+        query_asr_button.click(
+                            query_asr_task,
+                            inputs=[asr_job_id],
+                            outputs=[asr_task_status, video_text_output, video_srt_output, video_state, audio_state, video_text_file, video_srt_file, asr_job_id])
+        asr_task_timer.tick(
+                            query_asr_task,
+                            inputs=[asr_job_id],
+                            outputs=[asr_task_status, video_text_output, video_srt_output, video_state, audio_state, video_text_file, video_srt_file, asr_job_id])
         clip_button.click(mix_clip, 
                            inputs=[video_text_input, 
                                    video_spk_input, 
