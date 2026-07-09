@@ -113,3 +113,9 @@ FUNCLIP_ASR_HUB=hf PORT=7860 ./start_funclip_server.sh
 The `Hotwords` field is prefilled with common medical terms. Add department names, doctor/patient names, drug names, and procedure names before running ASR, then click `Save Settings`.
 
 When using `ASR+SD`, Fun-ASR-Nano also loads punctuation and speaker models. The first run may download extra model files.
+
+## Background ASR Tasks
+
+`ASR` and `ASR+SD` now start background jobs and return a job id immediately. The web page polls the job every 10 seconds, and you can also click `Refresh ASR Task` manually.
+
+This avoids browser or reverse-proxy timeouts during long speech recognition. Keep the backend process running until the task reports `Done`; then the transcript, SRT, and download files are loaded into the page. If the page reloads, paste the job id back into `ASR Job ID` and click `Refresh ASR Task`.
