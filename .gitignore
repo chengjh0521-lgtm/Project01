@@ -11,5 +11,7 @@ gradio_tmp/
 output/
 local_videos/*
 !local_videos/.gitkeep
+local_sfx/*
+!local_sfx/.gitkeep
 *.log
 funclip-server.*.log

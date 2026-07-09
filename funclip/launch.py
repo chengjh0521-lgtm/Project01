@@ -33,6 +33,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir
 LOCAL_TMP_DIR = os.path.join(PROJECT_ROOT, "tmp")
 LOCAL_GRADIO_TMP_DIR = os.path.join(PROJECT_ROOT, "gradio_tmp")
 LOCAL_VIDEO_DIR = os.path.join(PROJECT_ROOT, "local_videos")
+LOCAL_SFX_DIR = os.path.join(PROJECT_ROOT, "local_sfx")
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 USER_SETTINGS_PATH = os.path.join(PROJECT_ROOT, "user_settings.json")
 ASR_TASKS = {}
@@ -41,6 +42,7 @@ ASR_RUN_LOCK = threading.Lock()
 os.makedirs(LOCAL_TMP_DIR, exist_ok=True)
 os.makedirs(LOCAL_GRADIO_TMP_DIR, exist_ok=True)
 os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
+os.makedirs(LOCAL_SFX_DIR, exist_ok=True)
 os.makedirs(DEFAULT_OUTPUT_DIR, exist_ok=True)
 os.environ.setdefault("TMP", LOCAL_TMP_DIR)
 os.environ.setdefault("TEMP", LOCAL_TMP_DIR)
@@ -64,6 +66,10 @@ DEFAULT_HIGHLIGHT_PROMPT = (
     "Do not explain."
 )
 DEFAULT_HIGHLIGHT_COUNT = 30
+DEFAULT_SOUND_EFFECT_RULES = (
+    "# Format: sound_file | trigger words | volume | cooldown seconds\n"
+    "# Example: ding.mp3 | 糖尿病,戒烟 | 0.35 | 2\n"
+)
 
 
 def load_user_settings():
@@ -145,6 +151,7 @@ if __name__ == "__main__":
         subtitle_font_color_value = "white"
 
     VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi")
+    SFX_EXTENSIONS = (".wav", ".mp3", ".aac", ".m4a", ".flac", ".ogg")
 
     def list_local_videos():
         choices = []
@@ -154,6 +161,17 @@ if __name__ == "__main__":
                     continue
                 path = os.path.join(root, name)
                 rel_path = os.path.relpath(path, LOCAL_VIDEO_DIR).replace(os.sep, "/")
+                choices.append(rel_path)
+        return sorted(choices)
+
+    def list_local_sfx():
+        choices = []
+        for root, _, files in os.walk(LOCAL_SFX_DIR):
+            for name in files:
+                if not name.lower().endswith(SFX_EXTENSIONS):
+                    continue
+                path = os.path.join(root, name)
+                rel_path = os.path.relpath(path, LOCAL_SFX_DIR).replace(os.sep, "/")
                 choices.append(rel_path)
         return sorted(choices)
 
@@ -195,13 +213,17 @@ if __name__ == "__main__":
     def video_recog(video_input, sd_switch, hotwords, output_dir):
         return audio_clipper.video_recog(video_input, sd_switch, hotwords, output_dir=output_dir)
 
-    def video_clip(dest_text, video_spk_input, start_ost, end_ost, state, output_dir):
+    def video_clip(dest_text, video_spk_input, start_ost, end_ost, state, output_dir, sound_effect_rules=None):
         return audio_clipper.video_clip(
-            dest_text, start_ost, end_ost, state, dest_spk=video_spk_input, output_dir=output_dir
+            dest_text, start_ost, end_ost, state, dest_spk=video_spk_input, output_dir=output_dir,
+            sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR
             )
 
     def refresh_local_videos():
         return gr.update(choices=list_local_videos())
+
+    def refresh_local_sfx():
+        return gr.update(choices=list_local_sfx())
 
     def _srt_time_to_millis(time_text):
         time_text = (time_text or "").strip().replace(",", ".")
@@ -329,7 +351,8 @@ if __name__ == "__main__":
 
     def save_llm_settings(
             prompt_system, prompt_user, model, apikey, highlight_prompt,
-            highlight_count, font_size, font_color, subtitle_x, subtitle_y, highlight_color):
+            highlight_count, font_size, font_color, subtitle_x, subtitle_y, highlight_color,
+            sound_effect_rules):
         settings = load_user_settings()
         try:
             saved_highlight_count = max(1, int(float(highlight_count or DEFAULT_HIGHLIGHT_COUNT)))
@@ -347,6 +370,7 @@ if __name__ == "__main__":
             "subtitle_x": subtitle_x,
             "subtitle_y": subtitle_y,
             "highlight_color": highlight_color or "yellow",
+            "sound_effect_rules": sound_effect_rules or "",
         })
         save_user_settings(settings)
         return "Saved. These settings will be loaded automatically next time."
@@ -507,7 +531,7 @@ if __name__ == "__main__":
             return f"Failed. Job ID: {job_id}\n{message}\n{detail[-2000:]}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
         return f"{status.title()}. Job ID: {job_id}\n{message}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
     
-    def mix_clip(dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir):
+    def mix_clip(dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, sound_effect_rules):
         output_dir = output_dir.strip()
         if not len(output_dir):
             output_dir = None
@@ -515,7 +539,8 @@ if __name__ == "__main__":
             output_dir = os.path.abspath(output_dir)
         if video_state is not None:
             clip_video_file, message, clip_srt = audio_clipper.video_clip(
-                dest_text, start_ost, end_ost, video_state, dest_spk=video_spk_input, output_dir=output_dir)
+                dest_text, start_ost, end_ost, video_state, dest_spk=video_spk_input, output_dir=output_dir,
+                sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR)
             return clip_video_file, None, message, clip_srt
         if audio_state is not None:
             (sr, res_audio), message, clip_srt = audio_clipper.clip(
@@ -564,7 +589,7 @@ if __name__ == "__main__":
         composed.alpha_composite(subtitle_image, (int(x), int(y)))
         return composed.convert("RGB")
 
-    def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color):
+    def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules):
         output_dir = output_dir.strip()
         if not len(output_dir):
             output_dir = None
@@ -575,6 +600,7 @@ if __name__ == "__main__":
             font_size=font_size, font_color=font_color,
             subtitle_x=subtitle_x, subtitle_y=subtitle_y,
             highlight_terms=highlight_terms, highlight_color=highlight_color,
+            sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR,
             add_sub=True, dest_spk=video_spk_input, output_dir=output_dir
             )
         
@@ -641,7 +667,7 @@ if __name__ == "__main__":
             return g4f_openai_call("-".join(model.split('-')[1:]), system_content, user_content)
         return "Please choose a deepseek, qwen, gpt, moonshot, or g4f model to generate subtitle highlights."
 
-    def AI_clip(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir):
+    def AI_clip(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, sound_effect_rules):
         timestamp_list = extract_timestamps(LLM_res)
         if not timestamp_list:
             message = "No timestamps found in LLM result. Please make sure the LLM output contains ranges like [00:01:20-00:02:20]."
@@ -654,7 +680,8 @@ if __name__ == "__main__":
         if video_state is not None:
             clip_video_file, message, clip_srt = audio_clipper.video_clip(
                 dest_text, start_ost, end_ost, video_state, 
-                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=False)
+                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=False,
+                sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR)
             return clip_video_file, None, message, clip_srt
         if audio_state is not None:
             (sr, res_audio), message, clip_srt = audio_clipper.clip(
@@ -662,7 +689,7 @@ if __name__ == "__main__":
                 dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list)
             return None, (sr, res_audio), message, clip_srt
     
-    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color):
+    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules):
         timestamp_list = extract_timestamps(LLM_res)
         if not timestamp_list:
             message = "No timestamps found in LLM result. Please make sure the LLM output contains ranges like [00:01:20-00:02:20]."
@@ -678,6 +705,7 @@ if __name__ == "__main__":
                 font_size=font_size, font_color=font_color,
                 subtitle_x=subtitle_x, subtitle_y=subtitle_y,
                 highlight_terms=highlight_terms, highlight_color=highlight_color,
+                sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR,
                 dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=True)
             return clip_video_file, None, message, clip_srt
         if audio_state is not None:
@@ -831,6 +859,19 @@ if __name__ == "__main__":
                     placeholder="One term per line. You can also separate terms with commas.",
                     lines=4,
                 )
+                with gr.Row():
+                    local_sfx_list = gr.Dropdown(
+                        choices=list_local_sfx(),
+                        label="Server Sound Effects | local_sfx/",
+                        interactive=False,
+                    )
+                    refresh_local_sfx_button = gr.Button("Refresh Sound Effects")
+                sound_effect_rules = gr.Textbox(
+                    label="Sound Effect Word Bindings",
+                    value=user_settings.get("sound_effect_rules") or DEFAULT_SOUND_EFFECT_RULES,
+                    placeholder="ding.mp3 | 糖尿病,戒烟 | 0.35 | 2",
+                    lines=6,
+                )
                 subtitle_preview_button = gr.Button("Preview Subtitle")
                 subtitle_preview_image = gr.Image(label="Subtitle Position Preview", interactive=False)
                 video_output = gr.Video(label="裁剪结果 | Video Clipped", height=640, elem_classes=["video-preserve"])
@@ -842,6 +883,10 @@ if __name__ == "__main__":
                             refresh_local_videos,
                             inputs=[],
                             outputs=[local_video_input])
+        refresh_local_sfx_button.click(
+                            refresh_local_sfx,
+                            inputs=[],
+                            outputs=[local_sfx_list])
         download_video_button.click(
                             download_video_from_url,
                             inputs=[video_url_input],
@@ -849,7 +894,8 @@ if __name__ == "__main__":
         save_settings_button.click(
                             save_llm_settings,
                             inputs=[prompt_head, prompt_head2, llm_model, apikey_input, highlight_prompt,
-                                    highlight_count, font_size, font_color, subtitle_x, subtitle_y, highlight_color],
+                                    highlight_count, font_size, font_color, subtitle_x, subtitle_y, highlight_color,
+                                    sound_effect_rules],
                             outputs=[save_settings_status])
         recog_button.click(start_asr_task,
                             inputs=[local_video_input,
@@ -886,7 +932,8 @@ if __name__ == "__main__":
                                    video_end_ost, 
                                    video_state, 
                                    audio_state, 
-                                   output_dir
+                                   output_dir,
+                                   sound_effect_rules
                                    ],
                            outputs=[video_output, audio_output, clip_message, srt_clipped])
         clip_subti_button.click(video_clip_addsub, 
@@ -902,6 +949,7 @@ if __name__ == "__main__":
                                    subtitle_y,
                                    highlight_terms,
                                    highlight_color,
+                                   sound_effect_rules,
                                    ], 
                            outputs=[video_output, clip_message, srt_clipped])
         llm_button.click(llm_inference,
@@ -919,6 +967,7 @@ if __name__ == "__main__":
                                    video_state, 
                                    audio_state, 
                                    output_dir,
+                                   sound_effect_rules,
                                    ],
                            outputs=[video_output, audio_output, clip_message, srt_clipped])
         llm_clip_subti_button.click(AI_clip_subti, 
@@ -936,6 +985,7 @@ if __name__ == "__main__":
                                    subtitle_y,
                                    highlight_terms,
                                    highlight_color,
+                                   sound_effect_rules,
                                    ],
                            outputs=[video_output, audio_output, clip_message, srt_clipped])
     

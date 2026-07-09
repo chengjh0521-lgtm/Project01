@@ -270,6 +270,105 @@ def _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x=50, subt
     return CompositeVideoClip([video_clip, *subtitle_clips], size=video_clip.size)
 
 
+def _split_trigger_terms(terms_text):
+    if not terms_text:
+        return []
+    if isinstance(terms_text, (list, tuple, set)):
+        raw_terms = terms_text
+    else:
+        raw_terms = re.split(r"[\n,，;；、]+", str(terms_text))
+    return [str(term).strip() for term in raw_terms if str(term).strip()]
+
+
+def _parse_sound_effect_rules(sound_effect_rules, sound_effect_dir=None):
+    rules = []
+    if not sound_effect_rules:
+        return rules
+
+    base_dir = os.path.abspath(sound_effect_dir) if sound_effect_dir else None
+    for line in str(sound_effect_rules).splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) < 2:
+            continue
+
+        effect_path = parts[0]
+        if base_dir and not os.path.isabs(effect_path):
+            effect_path = os.path.abspath(os.path.join(base_dir, effect_path))
+        else:
+            effect_path = os.path.abspath(effect_path)
+        if base_dir and not effect_path.startswith(base_dir + os.sep) and effect_path != base_dir:
+            logging.warning("Skip sound effect outside local_sfx: %s", effect_path)
+            continue
+        if not os.path.isfile(effect_path):
+            logging.warning("Skip missing sound effect file: %s", effect_path)
+            continue
+
+        try:
+            volume = float(parts[2]) if len(parts) >= 3 and parts[2] else 0.35
+        except ValueError:
+            volume = 0.35
+        try:
+            cooldown = max(0.0, float(parts[3])) if len(parts) >= 4 and parts[3] else 2.0
+        except ValueError:
+            cooldown = 2.0
+
+        terms = _split_trigger_terms(parts[1])
+        if not terms:
+            continue
+        rules.append({
+            "path": effect_path,
+            "terms": terms,
+            "volume": max(0.0, min(volume, 2.0)),
+            "cooldown": cooldown,
+        })
+    return rules
+
+
+def _with_sound_effects(video_clip, subs, sound_effect_rules=None, sound_effect_dir=None):
+    rules = _parse_sound_effect_rules(sound_effect_rules, sound_effect_dir)
+    if not rules or not subs:
+        return video_clip, 0
+
+    audio_clips = []
+    if video_clip.audio is not None:
+        audio_clips.append(video_clip.audio)
+
+    trigger_count = 0
+    last_trigger_by_path = {}
+    for (start, end), text in subs:
+        text_lower = str(text or "").lower()
+        for rule in rules:
+            if not any(term.lower() in text_lower for term in rule["terms"]):
+                continue
+            last_trigger = last_trigger_by_path.get(rule["path"])
+            if last_trigger is not None and start - last_trigger < rule["cooldown"]:
+                continue
+            if start >= video_clip.duration:
+                continue
+
+            available_duration = video_clip.duration - start
+            if available_duration <= 0.05:
+                continue
+            try:
+                effect_clip = AudioFileClip(rule["path"]).volumex(rule["volume"])
+            except Exception:
+                logging.exception("Failed to load sound effect: %s", rule["path"])
+                continue
+            if effect_clip.duration > available_duration:
+                effect_clip = effect_clip.subclip(0, available_duration)
+            audio_clips.append(effect_clip.set_start(start))
+            last_trigger_by_path[rule["path"]] = start
+            trigger_count += 1
+
+    if trigger_count == 0:
+        return video_clip, 0
+    return video_clip.set_audio(CompositeAudioClip(audio_clips)), trigger_count
+
+
 def _is_valid_timestamp(timestamp):
     return (
         isinstance(timestamp, list)
@@ -512,6 +611,8 @@ class VideoClipper():
                    subtitle_y=88,
                    highlight_terms=None,
                    highlight_color='yellow',
+                   sound_effect_rules=None,
+                   sound_effect_dir=None,
                    add_sub=False, 
                    dest_spk=None, 
                    output_dir=None,
@@ -559,11 +660,13 @@ class VideoClipper():
         ts = all_ts
         # ts.sort()
         clip_srt = ""
+        sound_effect_subs = []
         if len(ts):
             if self.lang == 'en' and isinstance(sentences, str):
                 sentences = sentences.split()
             start, end = ts[0][0] / 16000, ts[0][1] / 16000
             srt_clip, subs, srt_index = generate_srt_clip(sentences, start, end, begin_index=srt_index, time_acc_ost=time_acc_ost)
+            sound_effect_subs.extend(subs)
             start, end = start+start_ost/1000.0, end+end_ost/1000.0
             video_clip = video.subclip(start, end)
             start_end_info = "from {} to {}".format(start, end)
@@ -577,6 +680,7 @@ class VideoClipper():
                 srt_clip, subs, srt_index = generate_srt_clip(sentences, start, end, begin_index=srt_index-1, time_acc_ost=time_acc_ost)
                 if not len(subs):
                     continue
+                sound_effect_subs.extend(subs)
                 chi_subs = []
                 sub_starts = subs[0][0][0]
                 for sub in subs:
@@ -594,6 +698,11 @@ class VideoClipper():
             logging.warning("Concating...")
             if len(concate_clip) > 1:
                 video_clip = concatenate_videoclips(concate_clip)
+            video_clip, sound_effect_count = _with_sound_effects(
+                video_clip, sound_effect_subs, sound_effect_rules, sound_effect_dir
+            )
+            if sound_effect_count:
+                message += "; {} sound effects mixed".format(sound_effect_count)
             # clip_video_file = clip_video_file[:-4] + '_no{}.mp4'.format(self.GLOBAL_COUNT)
             if output_dir is not None:
                 os.makedirs(output_dir, exist_ok=True)

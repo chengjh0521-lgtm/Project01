@@ -41,6 +41,7 @@ The same button also saves subtitle settings used after refresh:
 - subtitle highlight color
 - subtitle highlight prompt
 - expected subtitle highlight count
+- sound effect word bindings
 
 ## Output And Temp Files
 
@@ -50,6 +51,7 @@ Runtime files are intentionally ignored by Git:
 - `gradio_tmp/`
 - `output/`
 - `local_videos/`
+- `local_sfx/`
 - `funclip-env/`
 - `*.log`
 
@@ -76,6 +78,35 @@ scp ./your-video.mp4 root@your-server:/opt/funclip-project01/local_videos/
 ```
 
 Then open the web UI, click `Refresh Local Videos`, choose the video from `Server Local Video`, and run `ASR`.
+
+## Server Sound Effects
+
+Place reusable sound effects in:
+
+```text
+local_sfx/
+```
+
+Example:
+
+```bash
+scp ./ding.mp3 root@your-server:/opt/funclip-project01/local_sfx/
+```
+
+Open the web UI and click `Refresh Sound Effects` to see available files. Bind sound effects to trigger words in `Sound Effect Word Bindings`:
+
+```text
+ding.mp3 | 糖尿病,戒烟 | 0.35 | 2
+warning.mp3 | 心梗脑梗,癌症 | 0.4 | 3
+```
+
+Format:
+
+```text
+sound_file | trigger words | volume | cooldown seconds
+```
+
+`Save Settings` saves these bindings to `user_settings.json`. The bindings are applied to video clipping outputs, including `Clip`, `Clip+Subtitles`, `AI Clip`, and `AI Clip+Subtitles`.
 
 ## Server Mode
 
