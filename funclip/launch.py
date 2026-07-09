@@ -222,12 +222,18 @@ if __name__ == "__main__":
         if not range_pairs:
             return ""
 
+        def overlaps(start_ms, end_ms):
+            return any(start_ms < range_end and end_ms > range_start for range_start, range_end in range_pairs)
+
         lines = str(srt_text or "").splitlines()
         selected_blocks = []
         index = 0
-        time_line = re.compile(
-            r"(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})"
+        time_text = r"\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}"
+        arrow_time_line = re.compile(rf"({time_text})\s*-->\s*({time_text})")
+        bracket_time_line = re.compile(
+            rf"\[\s*({time_text})\s*(?:-->|-|~|至|到)\s*({time_text})\s*\]"
         )
+
         while index < len(lines):
             block = []
             while index < len(lines) and lines[index].strip():
@@ -239,7 +245,7 @@ if __name__ == "__main__":
 
             match = None
             for line in block:
-                match = time_line.search(line)
+                match = arrow_time_line.search(line) or bracket_time_line.search(line)
                 if match:
                     break
             if not match:
@@ -247,9 +253,38 @@ if __name__ == "__main__":
 
             start_ms = _srt_time_to_millis(match.group(1))
             end_ms = _srt_time_to_millis(match.group(2))
-            if any(start_ms < range_end and end_ms > range_start for range_start, range_end in range_pairs):
+            if overlaps(start_ms, end_ms):
                 selected_blocks.append("\n".join(block))
-        return "\n\n".join(selected_blocks)
+
+        if selected_blocks:
+            return "\n\n".join(selected_blocks)
+
+        # Some ASR/LLM outputs are line based, for example:
+        # 1. [00:06:04,460-00:06:15,370] subtitle text
+        selected_line_blocks = []
+        line_index = 0
+        while line_index < len(lines):
+            line = lines[line_index]
+            match = arrow_time_line.search(line) or bracket_time_line.search(line)
+            if not match:
+                line_index += 1
+                continue
+            start_ms = _srt_time_to_millis(match.group(1))
+            end_ms = _srt_time_to_millis(match.group(2))
+            if overlaps(start_ms, end_ms):
+                block = [line]
+                next_index = line_index + 1
+                while next_index < len(lines):
+                    next_line = lines[next_index]
+                    if not next_line.strip():
+                        break
+                    if arrow_time_line.search(next_line) or bracket_time_line.search(next_line):
+                        break
+                    block.append(next_line)
+                    next_index += 1
+                selected_line_blocks.append("\n".join(block))
+            line_index += 1
+        return "\n\n".join(selected_line_blocks)
 
     def _safe_video_filename_from_url(video_url):
         parsed = urlparse(video_url)

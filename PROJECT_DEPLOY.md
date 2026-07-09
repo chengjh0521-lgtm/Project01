@@ -116,6 +116,8 @@ After ASR finishes, run `LLM Inference` first so `LLM Clipper Result` contains t
 
 The subtitle highlighter only sends SRT lines that overlap the LLM-selected highlight timestamp ranges to the selected LLM. It uses the same `LLM Model Name` and API key saved by `Save Settings`.
 
+Timestamp ranges in `LLM Clipper Result` can use standard SRT arrows or bracket ranges such as `[00:06:04,460-00:06:15,370]`.
+
 You can also edit `Subtitle Highlight Terms` manually. Put one term per line, or separate terms with commas.
 
 The highlight terms and color are applied in `Preview Subtitle`, `Clip+Subtitles`, and `AI Clip+Subtitles`.
