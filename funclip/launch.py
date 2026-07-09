@@ -56,6 +56,13 @@ DEFAULT_PROMPT_SYSTEM = (
 )
 DEFAULT_PROMPT_USER = "这是待裁剪的视频srt字幕："
 DEFAULT_LLM_MODEL = "deepseek-v4-flash"
+DEFAULT_HIGHLIGHT_PROMPT = (
+    "Select subtitle keywords or short phrases that should be emphasized with color. "
+    "Focus on medical conclusions, risks, diagnosis names, treatment advice, numbers, "
+    "strong opinions, and sentences that make viewers want to keep watching. "
+    "Return only the exact words or short phrases that appear in the SRT, one item per line, up to 20 items. "
+    "Do not explain."
+)
 
 
 def load_user_settings():
@@ -119,6 +126,16 @@ if __name__ == "__main__":
     audio_clipper = VideoClipper(funasr_model)
     audio_clipper.lang = args.lang
     user_settings = load_user_settings()
+
+    def setting_float(key, default):
+        try:
+            return float(user_settings.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    subtitle_font_color_value = user_settings.get("subtitle_font_color") or "white"
+    if subtitle_font_color_value not in ["black", "white", "green", "red"]:
+        subtitle_font_color_value = "white"
 
     VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi")
 
@@ -220,13 +237,23 @@ if __name__ == "__main__":
         choices = list_local_videos()
         return f"Downloaded to local_videos/{filename}", gr.update(choices=choices, value=filename)
 
-    def save_llm_settings(prompt_system, prompt_user, model, apikey):
-        save_user_settings({
+    def save_llm_settings(
+            prompt_system, prompt_user, model, apikey, highlight_prompt,
+            font_size, font_color, subtitle_x, subtitle_y, highlight_color):
+        settings = load_user_settings()
+        settings.update({
             "prompt_system": prompt_system or "",
             "prompt_user": prompt_user or "",
             "llm_model": model or DEFAULT_LLM_MODEL,
             "apikey": apikey or "",
+            "highlight_prompt": highlight_prompt or DEFAULT_HIGHLIGHT_PROMPT,
+            "subtitle_font_size": font_size,
+            "subtitle_font_color": font_color or "white",
+            "subtitle_x": subtitle_x,
+            "subtitle_y": subtitle_y,
+            "highlight_color": highlight_color or "yellow",
         })
+        save_user_settings(settings)
         return "Saved. These settings will be loaded automatically next time."
 
     def mix_recog(local_video, video_input, audio_input, hotwords, output_dir):
@@ -486,18 +513,16 @@ if __name__ == "__main__":
             logging.error("LLM name error, only {} are supported as LLM name prefix."
                           .format(SUPPORT_LLM_PREFIX))
 
-    def llm_subtitle_highlights(srt_text, model, apikey):
+    def llm_subtitle_highlights(srt_text, model, apikey, highlight_prompt):
         srt_text = (srt_text or "").strip()
         if not srt_text:
             return "Please run ASR first so the SRT subtitles are available."
-        system_content = (
-            "You select subtitle text that should be highlighted in short-form videos. "
-            "Read the SRT subtitles and return only the key words or short phrases that deserve a different color. "
-            "Prioritize medical conclusions, risk warnings, diagnosis names, treatment advice, numeric indicators, "
-            "strong opinions, and emotionally engaging phrases. Do not choose full long sentences. "
-            "Return one item per line, up to 20 items. Do not explain."
+        system_content = (highlight_prompt or DEFAULT_HIGHLIGHT_PROMPT).strip()
+        user_content = (
+            "Use the instruction above to select subtitle highlight terms from this SRT. "
+            "Return one exact term or short phrase per line only.\n\n"
+            + srt_text
         )
-        user_content = "Select subtitle highlight terms from this SRT:\n" + srt_text
         if model.startswith('qwen'):
             return call_qwen_model(apikey, model, user_content, system_content)
         if model.startswith('gpt') or model.startswith('moonshot') or model.startswith('deepseek'):
@@ -668,18 +693,23 @@ if __name__ == "__main__":
                         video_start_ost = gr.Slider(minimum=-500, maximum=1000, value=0, step=50, label="⏪ 开始位置偏移 | Start Offset (ms)")
                         video_end_ost = gr.Slider(minimum=-500, maximum=1000, value=100, step=50, label="⏩ 结束位置偏移 | End Offset (ms)")
                 with gr.Row():
-                    font_size = gr.Slider(minimum=10, maximum=100, value=32, step=2, label="🔠 字幕字体大小 | Subtitle Font Size")
-                    font_color = gr.Radio(["black", "white", "green", "red"], label="🌈 字幕颜色 | Subtitle Color", value='white')
+                    font_size = gr.Slider(minimum=10, maximum=100, value=setting_float("subtitle_font_size", 32), step=2, label="🔠 字幕字体大小 | Subtitle Font Size")
+                    font_color = gr.Radio(["black", "white", "green", "red"], label="🌈 字幕颜色 | Subtitle Color", value=subtitle_font_color_value)
                     # font = gr.Radio(["黑体", "Alibaba Sans"], label="字体 Font")
                 with gr.Row():
-                    subtitle_x = gr.Slider(minimum=0, maximum=100, value=50, step=1, label="Subtitle X")
-                    subtitle_y = gr.Slider(minimum=0, maximum=100, value=88, step=1, label="Subtitle Y")
+                    subtitle_x = gr.Slider(minimum=0, maximum=100, value=setting_float("subtitle_x", 50), step=1, label="Subtitle X")
+                    subtitle_y = gr.Slider(minimum=0, maximum=100, value=setting_float("subtitle_y", 88), step=1, label="Subtitle Y")
                 subtitle_sample_text = gr.Textbox(
                     label="Subtitle Preview Text",
                     value="这里是样例字幕，可调整大小和位置",
                 )
+                highlight_prompt = gr.Textbox(
+                    label="Subtitle Highlight Prompt",
+                    value=user_settings.get("highlight_prompt") or DEFAULT_HIGHLIGHT_PROMPT,
+                    lines=4,
+                )
                 with gr.Row():
-                    highlight_color = gr.Textbox(label="Subtitle Highlight Color", value="yellow")
+                    highlight_color = gr.Textbox(label="Subtitle Highlight Color", value=user_settings.get("highlight_color") or "yellow")
                     llm_highlight_button = gr.Button("LLM Pick Subtitle Highlights")
                 highlight_terms = gr.Textbox(
                     label="Subtitle Highlight Terms",
@@ -703,7 +733,8 @@ if __name__ == "__main__":
                             outputs=[download_video_status, local_video_input])
         save_settings_button.click(
                             save_llm_settings,
-                            inputs=[prompt_head, prompt_head2, llm_model, apikey_input],
+                            inputs=[prompt_head, prompt_head2, llm_model, apikey_input, highlight_prompt,
+                                    font_size, font_color, subtitle_x, subtitle_y, highlight_color],
                             outputs=[save_settings_status])
         recog_button.click(start_asr_task,
                             inputs=[local_video_input,
@@ -762,7 +793,7 @@ if __name__ == "__main__":
                          inputs=[prompt_head, prompt_head2, video_srt_output, llm_model, apikey_input, video_input],
                          outputs=[llm_result])
         llm_highlight_button.click(llm_subtitle_highlights,
-                         inputs=[video_srt_output, llm_model, apikey_input],
+                         inputs=[video_srt_output, llm_model, apikey_input, highlight_prompt],
                          outputs=[highlight_terms])
         llm_clip_button.click(AI_clip, 
                            inputs=[llm_result,

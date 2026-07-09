@@ -34,6 +34,13 @@ user_settings.json
 
 This file is ignored by Git. On Linux, the app writes it with `600` permissions.
 
+The same button also saves subtitle settings used after refresh:
+
+- subtitle font size and color
+- subtitle X/Y position
+- subtitle highlight color
+- subtitle highlight prompt
+
 ## Output And Temp Files
 
 Runtime files are intentionally ignored by Git:
@@ -104,6 +111,8 @@ Click `Preview Subtitle` after selecting a server local video or uploading a vid
 
 Use `Subtitle Highlight Color` to choose the emphasis color. The default is `yellow`, and CSS color names or hex colors such as `#ffcc00` are accepted.
 
-After ASR finishes, click `LLM Pick Subtitle Highlights` to let the selected LLM choose important subtitle words or short phrases. You can also edit `Subtitle Highlight Terms` manually. Put one term per line, or separate terms with commas.
+After ASR finishes, edit `Subtitle Highlight Prompt` if needed, then click `LLM Pick Subtitle Highlights` to let the selected LLM choose important subtitle words or short phrases. This uses the same `LLM Model Name` and API key saved by `Save Settings`.
+
+You can also edit `Subtitle Highlight Terms` manually. Put one term per line, or separate terms with commas.
 
 The highlight terms and color are applied in `Preview Subtitle`, `Clip+Subtitles`, and `AI Clip+Subtitles`.
