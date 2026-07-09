@@ -258,9 +258,14 @@ def _subtitle_position(video_size, subtitle_size, subtitle_x=50, subtitle_y=88):
     return x, y
 
 
+def _subtitle_parts(sub):
+    return sub[0], sub[1], sub[2] if len(sub) > 2 else None
+
+
 def _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x=50, subtitle_y=88, highlight_terms=None, highlight_color="yellow"):
     subtitle_clips = []
-    for (start, end), text in subs:
+    for sub in subs:
+        (start, end), text, _ = _subtitle_parts(sub)
         subtitle_clip = _subtitle_image_clip(text, font_size, font_color, video_clip.size, highlight_terms, highlight_color)
         subtitle_clip = subtitle_clip.set_start(start).set_duration(max(0, end - start))
         subtitle_clip = subtitle_clip.set_pos(
@@ -343,7 +348,45 @@ def _parse_sound_effect_rules(sound_effect_rules, sound_effect_dir=None):
     return rules
 
 
-def _sound_effect_trigger_times(start, end, text, terms):
+def _compact_text_with_token_map(token_times):
+    compact_chars = []
+    char_to_token = []
+    for token_index, token in enumerate(token_times or []):
+        token_text = str(token.get("text", "")).strip().lower()
+        if not token_text:
+            continue
+        for char in token_text:
+            if char.isspace():
+                continue
+            compact_chars.append(char)
+            char_to_token.append(token_index)
+    return "".join(compact_chars), char_to_token
+
+
+def _sound_effect_trigger_times(start, end, text, terms, token_times=None):
+    compact_text, char_to_token = _compact_text_with_token_map(token_times)
+    if compact_text and char_to_token:
+        triggers = []
+        seen = set()
+        for term in terms:
+            term_compact = "".join(str(term or "").strip().lower().split())
+            if not term_compact:
+                continue
+            search_from = 0
+            while True:
+                index = compact_text.find(term_compact, search_from)
+                if index < 0:
+                    break
+                token_index = char_to_token[index]
+                key = (token_index, term_compact)
+                if key not in seen:
+                    seen.add(key)
+                    token = token_times[token_index]
+                    triggers.append((float(token.get("start", start)), term_compact))
+                search_from = index + max(1, len(term_compact))
+        if triggers:
+            return sorted(triggers, key=lambda item: item[0])
+
     text = str(text or "")
     text_lower = text.lower()
     if not text_lower:
@@ -389,9 +432,10 @@ def _with_sound_effects(video_clip, subs, sound_effect_rules=None, sound_effect_
 
     trigger_count = 0
     last_trigger_by_path = {}
-    for (start, end), text in subs:
+    for sub in subs:
+        (start, end), text, token_times = _subtitle_parts(sub)
         for rule in rules:
-            for trigger_start, _ in _sound_effect_trigger_times(start, end, text, rule["terms"]):
+            for trigger_start, _ in _sound_effect_trigger_times(start, end, text, rule["terms"], token_times):
                 last_trigger = last_trigger_by_path.get(rule["path"])
                 if last_trigger is not None and trigger_start - last_trigger < rule["cooldown"]:
                     continue

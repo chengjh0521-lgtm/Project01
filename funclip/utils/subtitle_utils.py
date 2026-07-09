@@ -30,6 +30,7 @@ class Text2SRT():
     def __init__(self, text, timestamp, offset=0):
         self.token_list = text
         self.timestamp = timestamp
+        self.offset = offset
         start, end = timestamp[0][0] - offset, timestamp[-1][1] - offset
         self.start_sec, self.end_sec = start, end
         self.start_time = time_convert(start)
@@ -52,6 +53,17 @@ class Text2SRT():
             self.text())
     def time(self, acc_ost=0.0):
         return (self.start_sec/1000+acc_ost, self.end_sec/1000+acc_ost)
+    def token_times(self, acc_ost=0.0):
+        if isinstance(self.token_list, str) or len(self.token_list) != len(self.timestamp):
+            return []
+        return [
+            {
+                "text": str(token),
+                "start": (ts[0] - self.offset) / 1000 + acc_ost,
+                "end": (ts[1] - self.offset) / 1000 + acc_ost,
+            }
+            for token, ts in zip(self.token_list, self.timestamp)
+        ]
 
 
 def generate_srt(sentence_list):
@@ -85,7 +97,7 @@ def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0
             # print("CASE1"); import pdb; pdb.set_trace()
             t2s = Text2SRT(sent['text'], sent['timestamp'], offset=start)
             srt_total += "{}\n{}".format(cc, t2s.srt(time_acc_ost))
-            subs.append((t2s.time(time_acc_ost), t2s.text()))
+            subs.append((t2s.time(time_acc_ost), t2s.text(), t2s.token_times(time_acc_ost)))
             cc += 1
             continue
         if sent['timestamp'][0][0] <= start:
@@ -111,7 +123,7 @@ def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0
             if len(ts):
                 t2s = Text2SRT(_text, _ts, offset=start)
                 srt_total += "{}\n{}".format(cc, t2s.srt(time_acc_ost))
-                subs.append((t2s.time(time_acc_ost), t2s.text()))
+                subs.append((t2s.time(time_acc_ost), t2s.text(), t2s.token_times(time_acc_ost)))
                 cc += 1
             continue
         if sent['timestamp'][-1][1] > end:
@@ -125,7 +137,7 @@ def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0
                 t2s = Text2SRT(_text, _ts, offset=start)
                 srt_total += "{}\n{}".format(cc, t2s.srt(time_acc_ost))
                 subs.append(
-                    (t2s.time(time_acc_ost), t2s.text())
+                    (t2s.time(time_acc_ost), t2s.text(), t2s.token_times(time_acc_ost))
                     )
                 cc += 1
             continue
