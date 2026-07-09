@@ -159,6 +159,14 @@ The server script binds Gradio to `0.0.0.0`, so place it behind your reverse pro
 
 This avoids browser or reverse-proxy timeouts during long speech recognition. Keep the backend process running until the task reports `Done`; then the transcript, SRT, and download files are loaded into the page. If the page reloads, paste the job id back into `ASR Job ID` and click `Query ASR Task`.
 
+ASR task records are also written to disk:
+
+```text
+tmp/asr_jobs/<job_id>/
+```
+
+If the page loses connection after the backend finishes, keep the job id, refresh the page, paste it into `ASR Job ID`, and click `Query ASR Task`. The app will recover the completed result from disk.
+
 ## Subtitle Preview
 
 Use `Subtitle Preview Text`, `Subtitle Font Size`, `Subtitle Color`, `Subtitle X`, and `Subtitle Y` to preview burned-in subtitles before clipping.

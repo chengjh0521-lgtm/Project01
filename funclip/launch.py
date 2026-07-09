@@ -20,17 +20,18 @@ import requests
 from PIL import Image
 from funasr import AutoModel
 from moviepy.editor import VideoFileClip
-from videoclipper import VideoClipper, _subtitle_image_clip, _subtitle_position
+from videoclipper import VideoClipper, _open_video_preserving_display, _subtitle_image_clip, _subtitle_position
 from llm.openai_api import openai_call
 from llm.qwen_api import call_qwen_model
 from llm.g4f_openai_api import g4f_openai_call
 from llm.twelvelabs_api import call_twelvelabs_pegasus
-from utils.trans_utils import extract_timestamps
+from utils.trans_utils import extract_timestamps, load_state, write_state
 from introduction import top_md_1, top_md_3, top_md_4
 
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 LOCAL_TMP_DIR = os.path.join(PROJECT_ROOT, "tmp")
+ASR_TASK_DIR = os.path.join(LOCAL_TMP_DIR, "asr_jobs")
 LOCAL_GRADIO_TMP_DIR = os.path.join(PROJECT_ROOT, "gradio_tmp")
 LOCAL_VIDEO_DIR = os.path.join(PROJECT_ROOT, "local_videos")
 LOCAL_SFX_DIR = os.path.abspath(
@@ -45,6 +46,7 @@ ASR_TASKS = {}
 ASR_TASK_LOCK = threading.Lock()
 ASR_RUN_LOCK = threading.Lock()
 os.makedirs(LOCAL_TMP_DIR, exist_ok=True)
+os.makedirs(ASR_TASK_DIR, exist_ok=True)
 os.makedirs(LOCAL_GRADIO_TMP_DIR, exist_ok=True)
 os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
 os.makedirs(LOCAL_SFX_DIR, exist_ok=True)
@@ -519,14 +521,110 @@ if __name__ == "__main__":
         shutil.copy2(video_input, copied_path)
         return copied_path
 
+    def _asr_job_dir(job_id):
+        safe_job_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", job_id or "")
+        return os.path.join(ASR_TASK_DIR, safe_job_id)
+
+    def _asr_record_path(job_id):
+        return os.path.join(_asr_job_dir(job_id), "task.json")
+
+    def _persist_asr_record(job_id, task):
+        os.makedirs(_asr_job_dir(job_id), exist_ok=True)
+        record = {key: value for key, value in task.items() if key != "result"}
+        result_meta = task.get("result_meta")
+        if result_meta:
+            record["result_meta"] = result_meta
+        with open(_asr_record_path(job_id), "w", encoding="utf-8") as record_file:
+            json.dump(record, record_file, ensure_ascii=False, indent=2)
+
+    def _persist_asr_result(job_id, result):
+        res_text, res_srt, video_state, audio_state, text_file, srt_file = result
+        job_dir = _asr_job_dir(job_id)
+        os.makedirs(job_dir, exist_ok=True)
+        result_text_file = os.path.join(job_dir, "result.txt")
+        result_srt_file = os.path.join(job_dir, "result.srt")
+        with open(result_text_file, "w", encoding="utf-8") as text_out:
+            text_out.write(res_text or "")
+        with open(result_srt_file, "w", encoding="utf-8") as srt_out:
+            srt_out.write(res_srt or "")
+
+        result_meta = {
+            "text_file": text_file or result_text_file,
+            "srt_file": srt_file or result_srt_file,
+            "result_text_file": result_text_file,
+            "result_srt_file": result_srt_file,
+            "kind": "video" if video_state is not None else "audio" if audio_state is not None else "unknown",
+        }
+        if video_state is not None:
+            write_state(job_dir, video_state)
+            result_meta.update({
+                "video_filename": video_state.get("video_filename"),
+                "clip_video_file": video_state.get("clip_video_file"),
+            })
+        elif audio_state is not None:
+            result_meta["audio_state_recoverable"] = False
+        return result_meta
+
+    def _load_asr_result_from_disk(job_id, result_meta):
+        job_dir = _asr_job_dir(job_id)
+        result_text_file = result_meta.get("result_text_file") or os.path.join(job_dir, "result.txt")
+        result_srt_file = result_meta.get("result_srt_file") or os.path.join(job_dir, "result.srt")
+        with open(result_text_file, "r", encoding="utf-8") as text_in:
+            res_text = text_in.read()
+        with open(result_srt_file, "r", encoding="utf-8") as srt_in:
+            res_srt = srt_in.read()
+
+        video_state, audio_state = None, None
+        if result_meta.get("kind") == "video":
+            video_state = load_state(job_dir)
+            video_filename = result_meta.get("video_filename")
+            if video_filename:
+                video_state["video_filename"] = video_filename
+                video_state["clip_video_file"] = result_meta.get("clip_video_file") or video_filename[:-4] + "_clip.mp4"
+                video_state["video"] = _open_video_preserving_display(video_filename)
+
+        return (
+            res_text,
+            res_srt,
+            video_state,
+            audio_state,
+            result_meta.get("text_file") or result_text_file,
+            result_meta.get("srt_file") or result_srt_file,
+        )
+
     def _set_asr_task(job_id, **updates):
         with ASR_TASK_LOCK:
             task = ASR_TASKS.setdefault(job_id, {})
             task.update(updates)
+            try:
+                _persist_asr_record(job_id, task)
+            except Exception:
+                logging.exception("Failed to persist ASR task record: %s", job_id)
 
     def _get_asr_task(job_id):
         with ASR_TASK_LOCK:
-            return dict(ASR_TASKS.get(job_id) or {})
+            task = dict(ASR_TASKS.get(job_id) or {})
+        if task:
+            return task
+
+        record_path = _asr_record_path(job_id)
+        if not os.path.exists(record_path):
+            return {}
+        try:
+            with open(record_path, "r", encoding="utf-8") as record_file:
+                task = json.load(record_file)
+            if task.get("status") == "done" and task.get("result_meta"):
+                task["result"] = _load_asr_result_from_disk(job_id, task["result_meta"])
+            with ASR_TASK_LOCK:
+                ASR_TASKS[job_id] = task
+            return dict(task)
+        except Exception:
+            logging.exception("Failed to load ASR task from disk: %s", job_id)
+            return {
+                "status": "failed",
+                "message": "ASR task record exists but could not be loaded. Check backend logs.",
+                "traceback": traceback.format_exc(),
+            }
 
     def _run_asr_task(job_id, speaker_mode, local_video, video_input, audio_input, hotwords, output_dir):
         _set_asr_task(job_id, status="queued", message="Queued. Waiting for the ASR worker.")
@@ -540,11 +638,13 @@ if __name__ == "__main__":
                 )
             if result is None:
                 raise ValueError("No local video, uploaded video, or audio input was provided.")
+            result_meta = _persist_asr_result(job_id, result)
             _set_asr_task(
                 job_id,
                 status="done",
                 message="ASR completed. Click Query ASR Task to load results if they are not shown yet.",
                 result=result,
+                result_meta=result_meta,
                 finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
         except Exception as exc:
