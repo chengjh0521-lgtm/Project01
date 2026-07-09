@@ -427,10 +427,10 @@ if __name__ == "__main__":
             image = image.resize((width, max_height), Image.LANCZOS)
         return image
 
-    def preview_subtitle(local_video, video_input, sample_text, font_size, font_color, subtitle_x, subtitle_y):
+    def preview_subtitle(local_video, video_input, sample_text, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color):
         background = _preview_background_frame(local_video, video_input)
         sample_text = (sample_text or "").strip() or "这里是样例字幕，可调整大小和位置"
-        subtitle_clip = _subtitle_image_clip(sample_text, int(font_size), font_color, background.size)
+        subtitle_clip = _subtitle_image_clip(sample_text, int(font_size), font_color, background.size, highlight_terms, highlight_color)
         subtitle_frame = subtitle_clip.get_frame(0)
         subtitle_image = Image.fromarray(subtitle_frame).convert("RGBA")
         if subtitle_clip.mask is not None:
@@ -442,7 +442,7 @@ if __name__ == "__main__":
         composed.alpha_composite(subtitle_image, (int(x), int(y)))
         return composed.convert("RGB")
 
-    def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, output_dir, font_size, font_color, subtitle_x, subtitle_y):
+    def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color):
         output_dir = output_dir.strip()
         if not len(output_dir):
             output_dir = None
@@ -452,6 +452,7 @@ if __name__ == "__main__":
             dest_text, start_ost, end_ost, state, 
             font_size=font_size, font_color=font_color,
             subtitle_x=subtitle_x, subtitle_y=subtitle_y,
+            highlight_terms=highlight_terms, highlight_color=highlight_color,
             add_sub=True, dest_spk=video_spk_input, output_dir=output_dir
             )
         
@@ -484,7 +485,27 @@ if __name__ == "__main__":
         else:
             logging.error("LLM name error, only {} are supported as LLM name prefix."
                           .format(SUPPORT_LLM_PREFIX))
-    
+
+    def llm_subtitle_highlights(srt_text, model, apikey):
+        srt_text = (srt_text or "").strip()
+        if not srt_text:
+            return "Please run ASR first so the SRT subtitles are available."
+        system_content = (
+            "You select subtitle text that should be highlighted in short-form videos. "
+            "Read the SRT subtitles and return only the key words or short phrases that deserve a different color. "
+            "Prioritize medical conclusions, risk warnings, diagnosis names, treatment advice, numeric indicators, "
+            "strong opinions, and emotionally engaging phrases. Do not choose full long sentences. "
+            "Return one item per line, up to 20 items. Do not explain."
+        )
+        user_content = "Select subtitle highlight terms from this SRT:\n" + srt_text
+        if model.startswith('qwen'):
+            return call_qwen_model(apikey, model, user_content, system_content)
+        if model.startswith('gpt') or model.startswith('moonshot') or model.startswith('deepseek'):
+            return openai_call(apikey, model, user_content, system_content)
+        if model.startswith('g4f'):
+            return g4f_openai_call("-".join(model.split('-')[1:]), system_content, user_content)
+        return "Please choose a deepseek, qwen, gpt, moonshot, or g4f model to generate subtitle highlights."
+
     def AI_clip(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir):
         timestamp_list = extract_timestamps(LLM_res)
         if not timestamp_list:
@@ -506,7 +527,7 @@ if __name__ == "__main__":
                 dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list)
             return None, (sr, res_audio), message, clip_srt
     
-    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, font_size, font_color, subtitle_x, subtitle_y):
+    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color):
         timestamp_list = extract_timestamps(LLM_res)
         if not timestamp_list:
             message = "No timestamps found in LLM result. Please make sure the LLM output contains ranges like [00:01:20-00:02:20]."
@@ -521,6 +542,7 @@ if __name__ == "__main__":
                 dest_text, start_ost, end_ost, video_state, 
                 font_size=font_size, font_color=font_color,
                 subtitle_x=subtitle_x, subtitle_y=subtitle_y,
+                highlight_terms=highlight_terms, highlight_color=highlight_color,
                 dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=True)
             return clip_video_file, None, message, clip_srt
         if audio_state is not None:
@@ -656,6 +678,14 @@ if __name__ == "__main__":
                     label="Subtitle Preview Text",
                     value="这里是样例字幕，可调整大小和位置",
                 )
+                with gr.Row():
+                    highlight_color = gr.Textbox(label="Subtitle Highlight Color", value="yellow")
+                    llm_highlight_button = gr.Button("LLM Pick Subtitle Highlights")
+                highlight_terms = gr.Textbox(
+                    label="Subtitle Highlight Terms",
+                    placeholder="One term per line. You can also separate terms with commas.",
+                    lines=4,
+                )
                 subtitle_preview_button = gr.Button("Preview Subtitle")
                 subtitle_preview_image = gr.Image(label="Subtitle Position Preview", interactive=False)
                 video_output = gr.Video(label="裁剪结果 | Video Clipped", height=640, elem_classes=["video-preserve"])
@@ -701,7 +731,7 @@ if __name__ == "__main__":
                             outputs=[asr_task_status, video_text_output, video_srt_output, video_state, audio_state, video_text_file, video_srt_file, asr_job_id])
         subtitle_preview_button.click(
                             preview_subtitle,
-                            inputs=[local_video_input, video_input, subtitle_sample_text, font_size, font_color, subtitle_x, subtitle_y],
+                            inputs=[local_video_input, video_input, subtitle_sample_text, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color],
                             outputs=[subtitle_preview_image])
         clip_button.click(mix_clip, 
                            inputs=[video_text_input, 
@@ -724,11 +754,16 @@ if __name__ == "__main__":
                                    font_color,
                                    subtitle_x,
                                    subtitle_y,
+                                   highlight_terms,
+                                   highlight_color,
                                    ], 
                            outputs=[video_output, clip_message, srt_clipped])
         llm_button.click(llm_inference,
                          inputs=[prompt_head, prompt_head2, video_srt_output, llm_model, apikey_input, video_input],
                          outputs=[llm_result])
+        llm_highlight_button.click(llm_subtitle_highlights,
+                         inputs=[video_srt_output, llm_model, apikey_input],
+                         outputs=[highlight_terms])
         llm_clip_button.click(AI_clip, 
                            inputs=[llm_result,
                                    video_text_input, 
@@ -753,6 +788,8 @@ if __name__ == "__main__":
                                    font_color,
                                    subtitle_x,
                                    subtitle_y,
+                                   highlight_terms,
+                                   highlight_color,
                                    ],
                            outputs=[video_output, audio_output, clip_message, srt_clipped])
     

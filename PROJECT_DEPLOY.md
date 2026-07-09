@@ -99,3 +99,11 @@ This avoids browser or reverse-proxy timeouts during long speech recognition. Ke
 Use `Subtitle Preview Text`, `Subtitle Font Size`, `Subtitle Color`, `Subtitle X`, and `Subtitle Y` to preview burned-in subtitles before clipping.
 
 Click `Preview Subtitle` after selecting a server local video or uploading a video. The same subtitle size, color, and position are used by `Clip+Subtitles` and `AI Clip+Subtitles`.
+
+## Subtitle Highlights
+
+Use `Subtitle Highlight Color` to choose the emphasis color. The default is `yellow`, and CSS color names or hex colors such as `#ffcc00` are accepted.
+
+After ASR finishes, click `LLM Pick Subtitle Highlights` to let the selected LLM choose important subtitle words or short phrases. You can also edit `Subtitle Highlight Terms` manually. Put one term per line, or separate terms with commas.
+
+The highlight terms and color are applied in `Preview Subtitle`, `Clip+Subtitles`, and `AI Clip+Subtitles`.

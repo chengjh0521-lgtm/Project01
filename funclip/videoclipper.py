@@ -124,14 +124,82 @@ def _wrap_subtitle_text(text, font, max_width):
     return "\n".join(wrapped_lines) if wrapped_lines else str(text)
 
 
-def _subtitle_image_clip(text, font_size, font_color, video_size):
+def _split_highlight_terms(highlight_terms):
+    if not highlight_terms:
+        return []
+    if isinstance(highlight_terms, (list, tuple, set)):
+        raw_terms = [str(term).strip() for term in highlight_terms]
+    else:
+        text = str(highlight_terms).strip()
+        separators = r"[\n,，;；、]+"
+        raw_terms = [term.strip() for term in re.split(separators, text)]
+        if len(raw_terms) == 1 and " " in raw_terms[0]:
+            raw_terms = [term.strip() for term in raw_terms[0].split()]
+    return [term for term in raw_terms if term]
+
+
+def _highlight_flags(text, highlight_terms):
+    flags = [False] * len(text)
+    lower_text = text.lower()
+    for term in _split_highlight_terms(highlight_terms):
+        lower_term = term.lower()
+        start = 0
+        while lower_term:
+            index = lower_text.find(lower_term, start)
+            if index < 0:
+                break
+            for pos in range(index, min(index + len(term), len(flags))):
+                flags[pos] = True
+            start = index + max(1, len(term))
+    return flags
+
+
+def _wrap_colored_subtitle_text(text, flags, font, max_width):
+    probe = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(probe)
+    lines = []
+    line = []
+    line_text = ""
+
+    for char, highlighted in zip(text, flags):
+        if char == "\n":
+            lines.append(line)
+            line = []
+            line_text = ""
+            continue
+        candidate = line_text + char
+        width, _ = _text_size(draw, candidate, font)
+        if line and width > max_width:
+            lines.append(line)
+            line = [(char, highlighted)]
+            line_text = char
+        else:
+            line.append((char, highlighted))
+            line_text = candidate
+
+    if line:
+        lines.append(line)
+    return lines or [[("", False)]]
+
+
+def _subtitle_image_clip(text, font_size, font_color, video_size, highlight_terms=None, highlight_color="yellow"):
     font = _load_subtitle_font(font_size)
     max_width = max(240, int(video_size[0] * 0.9))
-    wrapped_text = _wrap_subtitle_text(text, font, max_width)
+    text = str(text)
+    highlight_terms = _split_highlight_terms(highlight_terms)
 
     probe = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
     draw = ImageDraw.Draw(probe)
-    text_width, text_height = _text_size(draw, wrapped_text, font)
+    if highlight_terms:
+        flags = _highlight_flags(text, highlight_terms)
+        colored_lines = _wrap_colored_subtitle_text(text, flags, font, max_width)
+        line_texts = ["".join(char for char, _ in line) for line in colored_lines]
+        text_width = max((_text_size(draw, line_text, font)[0] for line_text in line_texts), default=0)
+        line_height = max(_text_size(draw, "测试T", font)[1], font_size)
+        text_height = len(colored_lines) * line_height + max(0, len(colored_lines) - 1) * 6
+    else:
+        wrapped_text = _wrap_subtitle_text(text, font, max_width)
+        text_width, text_height = _text_size(draw, wrapped_text, font)
     padding_x = max(16, font_size // 2)
     padding_y = max(10, font_size // 4)
     image_size = (text_width + padding_x * 2, text_height + padding_y * 2)
@@ -142,17 +210,41 @@ def _subtitle_image_clip(text, font_size, font_color, video_size):
         fill = ImageColor.getrgb(font_color)
     except ValueError:
         fill = (255, 255, 255)
+    try:
+        highlight_fill = ImageColor.getrgb(highlight_color)
+    except ValueError:
+        highlight_fill = (255, 255, 0)
 
-    draw.multiline_text(
-        (padding_x, padding_y),
-        wrapped_text,
-        font=font,
-        fill=fill + (255,),
-        spacing=6,
-        align="center",
-        stroke_width=2,
-        stroke_fill=(0, 0, 0, 190),
-    )
+    if highlight_terms:
+        line_height = max(_text_size(draw, "测试T", font)[1], font_size)
+        for line_index, line in enumerate(colored_lines):
+            line_text = "".join(char for char, _ in line)
+            line_width, _ = _text_size(draw, line_text, font)
+            x = padding_x + max(0, text_width - line_width) / 2
+            y = padding_y + line_index * (line_height + 6)
+            for char, highlighted in line:
+                char_fill = highlight_fill if highlighted else fill
+                draw.text(
+                    (x, y),
+                    char,
+                    font=font,
+                    fill=char_fill + (255,),
+                    stroke_width=2,
+                    stroke_fill=(0, 0, 0, 190),
+                )
+                char_width, _ = _text_size(draw, char, font)
+                x += char_width
+    else:
+        draw.multiline_text(
+            (padding_x, padding_y),
+            wrapped_text,
+            font=font,
+            fill=fill + (255,),
+            spacing=6,
+            align="center",
+            stroke_width=2,
+            stroke_fill=(0, 0, 0, 190),
+        )
     return ImageClip(np.array(image), transparent=True)
 
 
@@ -166,10 +258,10 @@ def _subtitle_position(video_size, subtitle_size, subtitle_x=50, subtitle_y=88):
     return x, y
 
 
-def _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x=50, subtitle_y=88):
+def _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x=50, subtitle_y=88, highlight_terms=None, highlight_color="yellow"):
     subtitle_clips = []
     for (start, end), text in subs:
-        subtitle_clip = _subtitle_image_clip(text, font_size, font_color, video_clip.size)
+        subtitle_clip = _subtitle_image_clip(text, font_size, font_color, video_clip.size, highlight_terms, highlight_color)
         subtitle_clip = subtitle_clip.set_start(start).set_duration(max(0, end - start))
         subtitle_clip = subtitle_clip.set_pos(
             lambda _, clip=subtitle_clip: _subtitle_position(video_clip.size, clip.size, subtitle_x, subtitle_y)
@@ -418,6 +510,8 @@ class VideoClipper():
                    font_color='white', 
                    subtitle_x=50,
                    subtitle_y=88,
+                   highlight_terms=None,
+                   highlight_color='yellow',
                    add_sub=False, 
                    dest_spk=None, 
                    output_dir=None,
@@ -475,7 +569,7 @@ class VideoClipper():
             start_end_info = "from {} to {}".format(start, end)
             clip_srt += srt_clip
             if add_sub:
-                video_clip = _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x, subtitle_y)
+                video_clip = _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color)
             concate_clip = [video_clip]
             time_acc_ost += end - start
             for _ts in ts[1:]:
@@ -492,7 +586,7 @@ class VideoClipper():
                 start_end_info += ", from {} to {}".format(str(start)[:5], str(end)[:5])
                 clip_srt += srt_clip
                 if add_sub:
-                    _video_clip = _with_subtitles(_video_clip, chi_subs, font_size, font_color, subtitle_x, subtitle_y)
+                    _video_clip = _with_subtitles(_video_clip, chi_subs, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color)
                     # _video_clip.write_videofile("debug.mp4", audio_codec="aac")
                 concate_clip.append(copy.copy(_video_clip))
                 time_acc_ost += end - start
