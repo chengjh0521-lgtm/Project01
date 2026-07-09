@@ -40,6 +40,7 @@ The same button also saves subtitle settings used after refresh:
 - subtitle X/Y position
 - subtitle highlight color
 - subtitle highlight prompt
+- expected subtitle highlight count
 
 ## Output And Temp Files
 
@@ -111,7 +112,9 @@ Click `Preview Subtitle` after selecting a server local video or uploading a vid
 
 Use `Subtitle Highlight Color` to choose the emphasis color. The default is `yellow`, and CSS color names or hex colors such as `#ffcc00` are accepted.
 
-After ASR finishes, edit `Subtitle Highlight Prompt` if needed, then click `LLM Pick Subtitle Highlights` to let the selected LLM choose important subtitle words or short phrases. This uses the same `LLM Model Name` and API key saved by `Save Settings`.
+After ASR finishes, run `LLM Inference` first so `LLM Clipper Result` contains timestamp ranges. Then edit `Subtitle Highlight Prompt` and `Expected Highlight Count` if needed, and click `LLM Pick Subtitle Highlights`.
+
+The subtitle highlighter only sends SRT lines that overlap the LLM-selected highlight timestamp ranges to the selected LLM. It uses the same `LLM Model Name` and API key saved by `Save Settings`.
 
 You can also edit `Subtitle Highlight Terms` manually. Put one term per line, or separate terms with commas.
 

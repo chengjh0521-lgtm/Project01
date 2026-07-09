@@ -60,9 +60,10 @@ DEFAULT_HIGHLIGHT_PROMPT = (
     "Select subtitle keywords or short phrases that should be emphasized with color. "
     "Focus on medical conclusions, risks, diagnosis names, treatment advice, numbers, "
     "strong opinions, and sentences that make viewers want to keep watching. "
-    "Return only the exact words or short phrases that appear in the SRT, one item per line, up to 20 items. "
+    "Return only the exact words or short phrases that appear in the SRT, one item per line. "
     "Do not explain."
 )
+DEFAULT_HIGHLIGHT_COUNT = 30
 
 
 def load_user_settings():
@@ -133,6 +134,12 @@ if __name__ == "__main__":
         except (TypeError, ValueError):
             return default
 
+    def setting_int(key, default):
+        try:
+            return int(float(user_settings.get(key, default)))
+        except (TypeError, ValueError):
+            return default
+
     subtitle_font_color_value = user_settings.get("subtitle_font_color") or "white"
     if subtitle_font_color_value not in ["black", "white", "green", "red"]:
         subtitle_font_color_value = "white"
@@ -196,6 +203,54 @@ if __name__ == "__main__":
     def refresh_local_videos():
         return gr.update(choices=list_local_videos())
 
+    def _srt_time_to_millis(time_text):
+        time_text = (time_text or "").strip().replace(",", ".")
+        parts = time_text.split(":")
+        if len(parts) != 3:
+            raise ValueError(f"Unsupported SRT timestamp: {time_text}")
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        second_parts = parts[2].split(".")
+        seconds = int(second_parts[0])
+        millis = int((second_parts[1] if len(second_parts) > 1 else "0").ljust(3, "0")[:3])
+        return (hours * 3600 + minutes * 60 + seconds) * 1000 + millis
+
+    def _filter_srt_by_ranges(srt_text, timestamp_ranges):
+        if not timestamp_ranges:
+            return ""
+        range_pairs = [(int(start), int(end)) for start, end in timestamp_ranges if end > start]
+        if not range_pairs:
+            return ""
+
+        lines = str(srt_text or "").splitlines()
+        selected_blocks = []
+        index = 0
+        time_line = re.compile(
+            r"(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})"
+        )
+        while index < len(lines):
+            block = []
+            while index < len(lines) and lines[index].strip():
+                block.append(lines[index])
+                index += 1
+            index += 1
+            if not block:
+                continue
+
+            match = None
+            for line in block:
+                match = time_line.search(line)
+                if match:
+                    break
+            if not match:
+                continue
+
+            start_ms = _srt_time_to_millis(match.group(1))
+            end_ms = _srt_time_to_millis(match.group(2))
+            if any(start_ms < range_end and end_ms > range_start for range_start, range_end in range_pairs):
+                selected_blocks.append("\n".join(block))
+        return "\n\n".join(selected_blocks)
+
     def _safe_video_filename_from_url(video_url):
         parsed = urlparse(video_url)
         filename = os.path.basename(unquote(parsed.path)).strip()
@@ -239,14 +294,19 @@ if __name__ == "__main__":
 
     def save_llm_settings(
             prompt_system, prompt_user, model, apikey, highlight_prompt,
-            font_size, font_color, subtitle_x, subtitle_y, highlight_color):
+            highlight_count, font_size, font_color, subtitle_x, subtitle_y, highlight_color):
         settings = load_user_settings()
+        try:
+            saved_highlight_count = max(1, int(float(highlight_count or DEFAULT_HIGHLIGHT_COUNT)))
+        except (TypeError, ValueError):
+            saved_highlight_count = DEFAULT_HIGHLIGHT_COUNT
         settings.update({
             "prompt_system": prompt_system or "",
             "prompt_user": prompt_user or "",
             "llm_model": model or DEFAULT_LLM_MODEL,
             "apikey": apikey or "",
             "highlight_prompt": highlight_prompt or DEFAULT_HIGHLIGHT_PROMPT,
+            "highlight_count": saved_highlight_count,
             "subtitle_font_size": font_size,
             "subtitle_font_color": font_color or "white",
             "subtitle_x": subtitle_x,
@@ -513,15 +573,30 @@ if __name__ == "__main__":
             logging.error("LLM name error, only {} are supported as LLM name prefix."
                           .format(SUPPORT_LLM_PREFIX))
 
-    def llm_subtitle_highlights(srt_text, model, apikey, highlight_prompt):
+    def llm_subtitle_highlights(llm_clip_result, srt_text, model, apikey, highlight_prompt, highlight_count):
         srt_text = (srt_text or "").strip()
         if not srt_text:
             return "Please run ASR first so the SRT subtitles are available."
-        system_content = (highlight_prompt or DEFAULT_HIGHLIGHT_PROMPT).strip()
+        timestamp_list = extract_timestamps(llm_clip_result)
+        if not timestamp_list:
+            return "Please run LLM Inference first so highlight timestamps are available in LLM Clipper Result."
+        scoped_srt = _filter_srt_by_ranges(srt_text, timestamp_list)
+        if not scoped_srt:
+            return "No SRT subtitles matched the LLM-selected highlight timestamps. Please check the LLM Clipper Result."
+        try:
+            target_count = max(1, int(float(highlight_count or DEFAULT_HIGHLIGHT_COUNT)))
+        except (TypeError, ValueError):
+            target_count = DEFAULT_HIGHLIGHT_COUNT
+        system_content = (
+            (highlight_prompt or DEFAULT_HIGHLIGHT_PROMPT).strip()
+            + f"\nAim to output exactly {target_count} highlight terms or short phrases if the selected subtitle range contains enough good candidates. "
+            + "If there are fewer good candidates, output as many strong candidates as possible. Do not explain."
+        )
         user_content = (
-            "Use the instruction above to select subtitle highlight terms from this SRT. "
+            "The SRT below has already been filtered to only the subtitle lines inside the LLM-selected video highlight ranges. "
+            f"Select about {target_count} highlight terms from this filtered SRT. "
             "Return one exact term or short phrase per line only.\n\n"
-            + srt_text
+            + scoped_srt
         )
         if model.startswith('qwen'):
             return call_qwen_model(apikey, model, user_content, system_content)
@@ -709,6 +784,11 @@ if __name__ == "__main__":
                     lines=4,
                 )
                 with gr.Row():
+                    highlight_count = gr.Number(
+                        label="预期高亮字幕数量 | Expected Highlight Count",
+                        value=setting_int("highlight_count", DEFAULT_HIGHLIGHT_COUNT),
+                        precision=0,
+                    )
                     highlight_color = gr.Textbox(label="Subtitle Highlight Color", value=user_settings.get("highlight_color") or "yellow")
                     llm_highlight_button = gr.Button("LLM Pick Subtitle Highlights")
                 highlight_terms = gr.Textbox(
@@ -734,7 +814,7 @@ if __name__ == "__main__":
         save_settings_button.click(
                             save_llm_settings,
                             inputs=[prompt_head, prompt_head2, llm_model, apikey_input, highlight_prompt,
-                                    font_size, font_color, subtitle_x, subtitle_y, highlight_color],
+                                    highlight_count, font_size, font_color, subtitle_x, subtitle_y, highlight_color],
                             outputs=[save_settings_status])
         recog_button.click(start_asr_task,
                             inputs=[local_video_input,
@@ -793,7 +873,7 @@ if __name__ == "__main__":
                          inputs=[prompt_head, prompt_head2, video_srt_output, llm_model, apikey_input, video_input],
                          outputs=[llm_result])
         llm_highlight_button.click(llm_subtitle_highlights,
-                         inputs=[video_srt_output, llm_model, apikey_input, highlight_prompt],
+                         inputs=[llm_result, video_srt_output, llm_model, apikey_input, highlight_prompt, highlight_count],
                          outputs=[highlight_terms])
         llm_clip_button.click(AI_clip, 
                            inputs=[llm_result,
