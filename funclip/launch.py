@@ -444,7 +444,560 @@ if __name__ == "__main__":
         settings = load_user_settings()
         sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
         try:
-            saved_highlight_count = max(1, int(float(highlight…7334 tokens truncated…xtbox(label="Download Status", interactive=False)
+            saved_highlight_count = max(1, int(float(highlight_count or DEFAULT_HIGHLIGHT_COUNT)))
+        except (TypeError, ValueError):
+            saved_highlight_count = DEFAULT_HIGHLIGHT_COUNT
+        settings.update({
+            "prompt_system": prompt_system or "",
+            "prompt_user": prompt_user or "",
+            "llm_model": model or DEFAULT_LLM_MODEL,
+            "apikey": apikey or "",
+            "subtitle_correction_prompt": (
+                subtitle_correction_prompt or DEFAULT_SUBTITLE_CORRECTION_PROMPT
+            ),
+            "highlight_prompt": highlight_prompt or DEFAULT_HIGHLIGHT_PROMPT,
+            "highlight_count": saved_highlight_count,
+            "subtitle_font_size": font_size,
+            "subtitle_font_color": font_color or "white",
+            "subtitle_x": subtitle_x,
+            "subtitle_y": subtitle_y,
+            "highlight_color": highlight_color or "yellow",
+            "sound_effect_rules": sound_effect_rules or "",
+        })
+        save_user_settings(settings)
+        return "Saved. These settings will be loaded automatically next time."
+
+    def mix_recog(local_video, video_input, audio_input, hotwords, output_dir):
+        output_dir = output_dir.strip()
+        if not len(output_dir):
+            output_dir = None
+        else:
+            output_dir = os.path.abspath(output_dir)
+        audio_state, video_state = None, None
+        local_video_path = resolve_local_video(local_video)
+        if local_video_path is not None:
+            res_text, res_srt, video_state = video_recog(
+                local_video_path, 'No', hotwords, output_dir=output_dir)
+            text_file = save_text_to_file(res_text, 'txt', output_dir)
+            srt_file = save_text_to_file(res_srt, 'srt', output_dir)
+            return res_text, res_srt, video_state, None, text_file, srt_file
+        if video_input is not None:
+            res_text, res_srt, video_state = video_recog(
+                video_input, 'No', hotwords, output_dir=output_dir)
+            text_file = save_text_to_file(res_text, 'txt', output_dir)
+            srt_file = save_text_to_file(res_srt, 'srt', output_dir)
+            return res_text, res_srt, video_state, None, text_file, srt_file
+        if audio_input is not None:
+            res_text, res_srt, audio_state = audio_recog(
+                audio_input, 'No', hotwords, output_dir=output_dir)
+            text_file = save_text_to_file(res_text, 'txt', output_dir)
+            srt_file = save_text_to_file(res_srt, 'srt', output_dir)
+            return res_text, res_srt, None, audio_state, text_file, srt_file
+    
+    def mix_recog_speaker(local_video, video_input, audio_input, hotwords, output_dir):
+        output_dir = output_dir.strip()
+        if not len(output_dir):
+            output_dir = None
+        else:
+            output_dir = os.path.abspath(output_dir)
+        audio_state, video_state = None, None
+        local_video_path = resolve_local_video(local_video)
+        if local_video_path is not None:
+            res_text, res_srt, video_state = video_recog(
+                local_video_path, 'Yes', hotwords, output_dir=output_dir)
+            text_file = save_text_to_file(res_text, 'txt', output_dir)
+            srt_file = save_text_to_file(res_srt, 'srt', output_dir)
+            return res_text, res_srt, video_state, None, text_file, srt_file
+        if video_input is not None:
+            res_text, res_srt, video_state = video_recog(
+                video_input, 'Yes', hotwords, output_dir=output_dir)
+            text_file = save_text_to_file(res_text, 'txt', output_dir)
+            srt_file = save_text_to_file(res_srt, 'srt', output_dir)
+            return res_text, res_srt, video_state, None, text_file, srt_file
+        if audio_input is not None:
+            res_text, res_srt, audio_state = audio_recog(
+                audio_input, 'Yes', hotwords, output_dir=output_dir)
+            text_file = save_text_to_file(res_text, 'txt', output_dir)
+            srt_file = save_text_to_file(res_srt, 'srt', output_dir)
+            return res_text, res_srt, None, audio_state, text_file, srt_file
+
+    def _copy_video_input_for_background(video_input, job_id):
+        if not video_input or not isinstance(video_input, str) or not os.path.isfile(video_input):
+            return video_input
+        _, ext = os.path.splitext(video_input)
+        safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", job_id)
+        copied_path = os.path.join(LOCAL_TMP_DIR, f"asr_{safe_name}{ext or '.mp4'}")
+        shutil.copy2(video_input, copied_path)
+        return copied_path
+
+    def _asr_job_dir(job_id):
+        safe_job_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", job_id or "")
+        return os.path.join(ASR_TASK_DIR, safe_job_id)
+
+    def _asr_record_path(job_id):
+        return os.path.join(_asr_job_dir(job_id), "task.json")
+
+    def _persist_asr_record(job_id, task):
+        os.makedirs(_asr_job_dir(job_id), exist_ok=True)
+        record = {key: value for key, value in task.items() if key != "result"}
+        result_meta = task.get("result_meta")
+        if result_meta:
+            record["result_meta"] = result_meta
+        with open(_asr_record_path(job_id), "w", encoding="utf-8") as record_file:
+            json.dump(record, record_file, ensure_ascii=False, indent=2)
+
+    def _persist_asr_result(job_id, result):
+        res_text, res_srt, video_state, audio_state, text_file, srt_file = result
+        job_dir = _asr_job_dir(job_id)
+        os.makedirs(job_dir, exist_ok=True)
+        result_text_file = os.path.join(job_dir, "result.txt")
+        result_srt_file = os.path.join(job_dir, "result.srt")
+        with open(result_text_file, "w", encoding="utf-8") as text_out:
+            text_out.write(res_text or "")
+        with open(result_srt_file, "w", encoding="utf-8") as srt_out:
+            srt_out.write(res_srt or "")
+
+        result_meta = {
+            "text_file": text_file or result_text_file,
+            "srt_file": srt_file or result_srt_file,
+            "result_text_file": result_text_file,
+            "result_srt_file": result_srt_file,
+            "kind": "video" if video_state is not None else "audio" if audio_state is not None else "unknown",
+        }
+        if video_state is not None:
+            write_state(job_dir, video_state)
+            result_meta.update({
+                "video_filename": video_state.get("video_filename"),
+                "clip_video_file": video_state.get("clip_video_file"),
+            })
+        elif audio_state is not None:
+            result_meta["audio_state_recoverable"] = False
+        return result_meta
+
+    def _load_asr_result_from_disk(job_id, result_meta):
+        job_dir = _asr_job_dir(job_id)
+        result_text_file = result_meta.get("result_text_file") or os.path.join(job_dir, "result.txt")
+        result_srt_file = result_meta.get("result_srt_file") or os.path.join(job_dir, "result.srt")
+        with open(result_text_file, "r", encoding="utf-8") as text_in:
+            res_text = text_in.read()
+        with open(result_srt_file, "r", encoding="utf-8") as srt_in:
+            res_srt = srt_in.read()
+
+        video_state, audio_state = None, None
+        if result_meta.get("kind") == "video":
+            video_state = load_state(job_dir)
+            video_filename = result_meta.get("video_filename")
+            if video_filename:
+                video_state["video_filename"] = video_filename
+                video_state["clip_video_file"] = result_meta.get("clip_video_file") or video_filename[:-4] + "_clip.mp4"
+                video_state["video"] = _open_video_preserving_display(video_filename)
+
+        return (
+            res_text,
+            res_srt,
+            video_state,
+            audio_state,
+            result_meta.get("text_file") or result_text_file,
+            result_meta.get("srt_file") or result_srt_file,
+        )
+
+    def _set_asr_task(job_id, **updates):
+        with ASR_TASK_LOCK:
+            task = ASR_TASKS.setdefault(job_id, {})
+            task.update(updates)
+            try:
+                _persist_asr_record(job_id, task)
+            except Exception:
+                logging.exception("Failed to persist ASR task record: %s", job_id)
+
+    def _get_asr_task(job_id):
+        with ASR_TASK_LOCK:
+            task = dict(ASR_TASKS.get(job_id) or {})
+        if task:
+            return task
+
+        record_path = _asr_record_path(job_id)
+        if not os.path.exists(record_path):
+            return {}
+        try:
+            with open(record_path, "r", encoding="utf-8") as record_file:
+                task = json.load(record_file)
+            if task.get("status") == "done" and task.get("result_meta"):
+                task["result"] = _load_asr_result_from_disk(job_id, task["result_meta"])
+            with ASR_TASK_LOCK:
+                ASR_TASKS[job_id] = task
+            return dict(task)
+        except Exception:
+            logging.exception("Failed to load ASR task from disk: %s", job_id)
+            return {
+                "status": "failed",
+                "message": "ASR task record exists but could not be loaded. Check backend logs.",
+                "traceback": traceback.format_exc(),
+            }
+
+    def _run_asr_task(job_id, speaker_mode, local_video, video_input, audio_input, hotwords, output_dir):
+        _set_asr_task(job_id, status="queued", message="Queued. Waiting for the ASR worker.")
+        try:
+            with ASR_RUN_LOCK:
+                _set_asr_task(job_id, status="running", message="Running ASR in the background. This may take several minutes.")
+                result = (
+                    mix_recog_speaker(local_video, video_input, audio_input, hotwords, output_dir)
+                    if speaker_mode
+                    else mix_recog(local_video, video_input, audio_input, hotwords, output_dir)
+                )
+            if result is None:
+                raise ValueError("No local video, uploaded video, or audio input was provided.")
+            result_meta = _persist_asr_result(job_id, result)
+            _set_asr_task(
+                job_id,
+                status="done",
+                message="ASR completed. Click Query ASR Task to load results if they are not shown yet.",
+                result=result,
+                result_meta=result_meta,
+                finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+        except Exception as exc:
+            logging.exception("ASR background task failed: %s", job_id)
+            _set_asr_task(
+                job_id,
+                status="failed",
+                message=f"ASR failed: {exc}",
+                traceback=traceback.format_exc(),
+                finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+
+    def _start_asr_task(local_video, video_input, audio_input, hotwords, output_dir, speaker_mode=False):
+        if not local_video and video_input is None and audio_input is None:
+            return "Please choose a server local video, uploaded video, or audio first.", "", "", None, None, None, None, ""
+
+        job_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        copied_video_input = _copy_video_input_for_background(video_input, job_id)
+        _set_asr_task(
+            job_id,
+            status="starting",
+            message="Starting ASR background task.",
+            created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        thread = threading.Thread(
+            target=_run_asr_task,
+            args=(job_id, speaker_mode, local_video, copied_video_input, audio_input, hotwords, output_dir),
+            daemon=True,
+        )
+        thread.start()
+        mode_name = "ASR+SD" if speaker_mode else "ASR"
+        return (
+            f"{mode_name} task started. Job ID: {job_id}\nThe backend will continue running. Use Query ASR Task to load the result.",
+            "",
+            "",
+            None,
+            None,
+            None,
+            None,
+            job_id,
+        )
+
+    def start_asr_task(local_video, video_input, audio_input, hotwords, output_dir):
+        return _start_asr_task(local_video, video_input, audio_input, hotwords, output_dir, speaker_mode=False)
+
+    def start_asr_speaker_task(local_video, video_input, audio_input, hotwords, output_dir):
+        return _start_asr_task(local_video, video_input, audio_input, hotwords, output_dir, speaker_mode=True)
+
+    def query_asr_task(job_id):
+        job_id = (job_id or "").strip()
+        if not job_id:
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
+
+        task = _get_asr_task(job_id)
+        if not task:
+            return f"ASR task not found: {job_id}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
+
+        status = task.get("status", "unknown")
+        message = task.get("message", "")
+        if status == "done":
+            res_text, res_srt, video_state, audio_state, text_file, srt_file = task.get("result")
+            return f"Done. Job ID: {job_id}\n{message}", res_text, res_srt, video_state, audio_state, text_file, srt_file, job_id
+        if status == "failed":
+            detail = task.get("traceback") or ""
+            return f"Failed. Job ID: {job_id}\n{message}\n{detail[-2000:]}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
+        return f"{status.title()}. Job ID: {job_id}\n{message}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
+    
+    def mix_clip(dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, sound_effect_rules, selected_sfx, selected_sfx_terms):
+        output_dir = output_dir.strip()
+        sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
+        if not len(output_dir):
+            output_dir = None
+        else:
+            output_dir = os.path.abspath(output_dir)
+        if video_state is not None:
+            clip_video_file, message, clip_srt = audio_clipper.video_clip(
+                dest_text, start_ost, end_ost, video_state, dest_spk=video_spk_input, output_dir=output_dir,
+                sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR)
+            return clip_video_file, None, message, clip_srt
+        if audio_state is not None:
+            (sr, res_audio), message, clip_srt = audio_clipper.clip(
+                dest_text, start_ost, end_ost, audio_state, dest_spk=video_spk_input, output_dir=output_dir)
+            return None, (sr, res_audio), message, clip_srt
+    
+    def _preview_background_frame(local_video, video_input):
+        video_path = None
+        try:
+            video_path = resolve_local_video(local_video)
+        except Exception:
+            video_path = None
+        if video_path is None and isinstance(video_input, str) and os.path.isfile(video_input):
+            video_path = video_input
+
+        if video_path:
+            clip = None
+            try:
+                clip = VideoFileClip(video_path)
+                frame = clip.get_frame(min(1.0, max(0.0, (clip.duration or 1.0) * 0.1)))
+                image = Image.fromarray(frame).convert("RGBA")
+            finally:
+                if clip is not None:
+                    clip.close()
+        else:
+            image = Image.new("RGBA", (720, 1280), (0, 0, 0, 255))
+
+        max_height = 960
+        if image.height > max_height:
+            width = int(image.width * max_height / image.height)
+            image = image.resize((width, max_height), Image.LANCZOS)
+        return image
+
+    def preview_subtitle(local_video, video_input, sample_text, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color):
+        background = _preview_background_frame(local_video, video_input)
+        sample_text = (sample_text or "").strip() or "这里是样例字幕，可调整大小和位置"
+        subtitle_clip = _subtitle_image_clip(sample_text, int(font_size), font_color, background.size, highlight_terms, highlight_color)
+        subtitle_frame = subtitle_clip.get_frame(0)
+        subtitle_image = Image.fromarray(subtitle_frame).convert("RGBA")
+        if subtitle_clip.mask is not None:
+            alpha = subtitle_clip.mask.get_frame(0)
+            alpha_image = Image.fromarray((alpha * 255).astype("uint8"), mode="L")
+            subtitle_image.putalpha(alpha_image)
+        x, y = _subtitle_position(background.size, subtitle_image.size, subtitle_x, subtitle_y)
+        composed = background.copy()
+        composed.alpha_composite(subtitle_image, (int(x), int(y)))
+        return composed.convert("RGB")
+
+    def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
+        output_dir = output_dir.strip()
+        sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
+        if not len(output_dir):
+            output_dir = None
+        else:
+            output_dir = os.path.abspath(output_dir)
+        return audio_clipper.video_clip(
+            dest_text, start_ost, end_ost, state, 
+            font_size=font_size, font_color=font_color,
+            subtitle_x=subtitle_x, subtitle_y=subtitle_y,
+            highlight_terms=highlight_terms, highlight_color=highlight_color,
+            sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR,
+            add_sub=True, dest_spk=video_spk_input, output_dir=output_dir
+            )
+        
+    def llm_inference(system_content, user_content, srt_text, model, apikey, video_input=None):
+        SUPPORT_LLM_PREFIX = ['qwen', 'gpt', 'g4f', 'moonshot', 'deepseek', 'pegasus']
+        format_instruction = (
+            "\n\nSelect subtitle-aligned highlight material by content quality, not by a fixed duration. "
+            "The final clip may be shorter or longer than 60 seconds when the story needs it; do not pad or force an exact length. "
+            "Prefer complete, coherent statements. Remove filler, repeated phrases, pauses, greetings, transitions, and weak sentences when possible. "
+            "If a strong highlight contains one or two weak sentences in the middle, split it into multiple timestamp ranges so those weak sentences are omitted; "
+            "the clipping tool will concatenate the selected ranges in order. "
+            "Output 1 to 6 ranges total, ordered by time, each as: N. [HH:MM:SS-HH:MM:SS] short reason/title. "
+            "Do not output clips without a timestamp range."
+        )
+        system_content = (system_content or "") + format_instruction
+        if model.startswith('pegasus'):
+            # TwelveLabs Pegasus reasons over the actual video (visuals + audio)
+            # rather than the ASR transcript, so it needs the video source.
+            if video_input is None:
+                logging.error("Pegasus requires a video input; please upload a video first.")
+                return "Please upload a video before running Pegasus inference."
+            return call_twelvelabs_pegasus(apikey, video_input, model=model, prompt=system_content)
+        if model.startswith('qwen'):
+            return call_qwen_model(apikey, model, user_content+'\n'+srt_text, system_content)
+        if model.startswith('gpt') or model.startswith('moonshot') or model.startswith('deepseek'):
+            return openai_call(apikey, model, user_content+'\n'+srt_text, system_content)
+        elif model.startswith('g4f'):
+            model = "-".join(model.split('-')[1:])
+            return g4f_openai_call(model, system_content, user_content+'\n'+srt_text)
+        else:
+            logging.error("LLM name error, only {} are supported as LLM name prefix."
+                          .format(SUPPORT_LLM_PREFIX))
+
+    def correct_subtitles_with_deepseek(
+            srt_text, correction_prompt, model, apikey,
+            video_state, audio_state, output_dir):
+        if not str(srt_text or "").strip():
+            return (
+                gr.update(), gr.update(), gr.update(), gr.update(),
+                "请先完成 ASR 识别，再进行字幕修正。",
+            )
+
+        deepseek_model = model if str(model or "").startswith("deepseek") else DEFAULT_LLM_MODEL
+        try:
+            corrected_srt, changed_count, total_count, matched_count = correct_srt_with_llm(
+                srt_text,
+                correction_prompt,
+                lambda user_content, system_content: openai_call(
+                    apikey, deepseek_model, user_content, system_content
+                ),
+            )
+            corrected_video_state = update_state_subtitles(video_state, corrected_srt)
+            corrected_audio_state = update_state_subtitles(audio_state, corrected_srt)
+
+            target_dir = str(output_dir or "").strip()
+            if target_dir:
+                target_dir = os.path.abspath(target_dir)
+                os.makedirs(target_dir, exist_ok=True)
+            else:
+                target_dir = tempfile.gettempdir()
+            corrected_file = os.path.join(
+                target_dir,
+                f"subtitle_corrected_{datetime.now().strftime('%Y%m%d_%H%M%S')}.srt",
+            )
+            with open(corrected_file, "w", encoding="utf-8") as corrected_out:
+                corrected_out.write(corrected_srt)
+
+            status = (
+                f"字幕修正完成：匹配 {matched_count}/{total_count} 条，修改 {changed_count} 条。"
+                f"已使用 {deepseek_model}，时间轴保持不变。后续 LLM 切片将自动使用修正版。"
+            )
+            return (
+                corrected_srt,
+                corrected_video_state if video_state is not None else gr.update(),
+                corrected_audio_state if audio_state is not None else gr.update(),
+                corrected_file,
+                status,
+            )
+        except SubtitleCorrectionError as exc:
+            logging.warning("Subtitle correction rejected: %s", exc)
+            return gr.update(), gr.update(), gr.update(), gr.update(), f"字幕修正失败：{exc}"
+        except Exception as exc:
+            logging.exception("Subtitle correction failed.")
+            return (
+                gr.update(), gr.update(), gr.update(), gr.update(),
+                f"字幕修正失败：{exc}。原字幕未被覆盖。",
+            )
+
+    def llm_subtitle_highlights(llm_clip_result, srt_text, model, apikey, highlight_prompt, highlight_count):
+        srt_text = (srt_text or "").strip()
+        if not srt_text:
+            return "Please run ASR first so the SRT subtitles are available."
+        timestamp_list = extract_timestamps(llm_clip_result)
+        if not timestamp_list:
+            return "Please run LLM Inference first so highlight timestamps are available in LLM Clipper Result."
+        scoped_srt = _filter_srt_by_ranges(srt_text, timestamp_list)
+        if not scoped_srt:
+            return "No SRT subtitles matched the LLM-selected highlight timestamps. Please check the LLM Clipper Result."
+        try:
+            target_count = max(1, int(float(highlight_count or DEFAULT_HIGHLIGHT_COUNT)))
+        except (TypeError, ValueError):
+            target_count = DEFAULT_HIGHLIGHT_COUNT
+        system_content = (
+            (highlight_prompt or DEFAULT_HIGHLIGHT_PROMPT).strip()
+            + f"\nAim to output exactly {target_count} highlight terms or short phrases if the selected subtitle range contains enough good candidates. "
+            + "If there are fewer good candidates, output as many strong candidates as possible. Do not explain."
+        )
+        user_content = (
+            "The SRT below has already been filtered to only the subtitle lines inside the LLM-selected video highlight ranges. "
+            f"Select about {target_count} highlight terms from this filtered SRT. "
+            "Return one exact term or short phrase per line only.\n\n"
+            + scoped_srt
+        )
+        if model.startswith('qwen'):
+            return call_qwen_model(apikey, model, user_content, system_content)
+        if model.startswith('gpt') or model.startswith('moonshot') or model.startswith('deepseek'):
+            return openai_call(apikey, model, user_content, system_content)
+        if model.startswith('g4f'):
+            return g4f_openai_call("-".join(model.split('-')[1:]), system_content, user_content)
+        return "Please choose a deepseek, qwen, gpt, moonshot, or g4f model to generate subtitle highlights."
+
+    def AI_clip(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, sound_effect_rules, selected_sfx, selected_sfx_terms):
+        timestamp_list = extract_timestamps(LLM_res)
+        sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
+        if not timestamp_list:
+            message = "No timestamps found in LLM result. Please make sure the LLM output contains ranges like [00:01:20-00:02:20]."
+            return None, None, message, ""
+        output_dir = output_dir.strip()
+        if not len(output_dir):
+            output_dir = None
+        else:
+            output_dir = os.path.abspath(output_dir)
+        if video_state is not None:
+            clip_video_file, message, clip_srt = audio_clipper.video_clip(
+                dest_text, start_ost, end_ost, video_state, 
+                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=False,
+                sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR)
+            return clip_video_file, None, message, clip_srt
+        if audio_state is not None:
+            (sr, res_audio), message, clip_srt = audio_clipper.clip(
+                dest_text, start_ost, end_ost, audio_state, 
+                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list)
+            return None, (sr, res_audio), message, clip_srt
+    
+    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
+        timestamp_list = extract_timestamps(LLM_res)
+        sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
+        if not timestamp_list:
+            message = "No timestamps found in LLM result. Please make sure the LLM output contains ranges like [00:01:20-00:02:20]."
+            return None, None, message, ""
+        output_dir = output_dir.strip()
+        if not len(output_dir):
+            output_dir = None
+        else:
+            output_dir = os.path.abspath(output_dir)
+        if video_state is not None:
+            clip_video_file, message, clip_srt = audio_clipper.video_clip(
+                dest_text, start_ost, end_ost, video_state, 
+                font_size=font_size, font_color=font_color,
+                subtitle_x=subtitle_x, subtitle_y=subtitle_y,
+                highlight_terms=highlight_terms, highlight_color=highlight_color,
+                sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR,
+                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=True)
+            return clip_video_file, None, message, clip_srt
+        if audio_state is not None:
+            (sr, res_audio), message, clip_srt = audio_clipper.clip(
+                dest_text, start_ost, end_ost, audio_state, 
+                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list)
+            return None, (sr, res_audio), message, clip_srt
+    
+    # gradio interface
+    app_css = """
+    .video-preserve video {
+        object-fit: contain !important;
+        width: 100% !important;
+        height: auto !important;
+        max-height: 78vh !important;
+        background: #000 !important;
+    }
+    .video-preserve [data-testid="video"] {
+        background: #000 !important;
+    }
+    """
+    theme = gr.Theme.load("funclip/utils/theme.json")
+    with gr.Blocks(theme=theme, css=app_css) as funclip_service:
+        gr.Markdown(top_md_1)
+        # gr.Markdown(top_md_2)
+        gr.Markdown(top_md_3)
+        gr.Markdown(top_md_4)
+        video_state, audio_state = gr.State(), gr.State()
+        asr_task_timer = gr.Timer(value=10)
+        with gr.Row():
+            with gr.Column():
+                with gr.Row():
+                    local_video_input = gr.Dropdown(
+                        choices=list_local_videos(),
+                        label="服务器本地视频 | Server Local Video",
+                        allow_custom_value=False,
+                        interactive=True,
+                    )
+                    refresh_local_video_button = gr.Button("Refresh Local Videos")
+                with gr.Row():
+                    video_url_input = gr.Textbox(label="视频 URL 下载到服务器 | Download URL to Server")
+                    download_video_button = gr.Button("Download URL")
+                download_video_status = gr.Textbox(label="Download Status", interactive=False)
                 with gr.Row():
                     video_input = gr.Video(label="视频输入 | Video Input", height=640, elem_classes=["video-preserve"])
                     audio_input = gr.Audio(label="音频输入 | Audio Input")
@@ -748,4 +1301,3 @@ if __name__ == "__main__":
         funclip_service.launch(share=args.share, server_port=args.port, server_name=server_name, inbrowser=False)
     else:
         funclip_service.launch(share=args.share, server_port=args.port, server_name=server_name)
-
