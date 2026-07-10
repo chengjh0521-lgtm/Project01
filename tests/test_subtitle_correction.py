@@ -1,5 +1,6 @@
 import json
 import sys
+import threading
 import unittest
 from pathlib import Path
 
@@ -50,9 +51,11 @@ class TestSubtitleCorrection(unittest.TestCase):
             correct_srt_with_llm(SRT, "校对", lambda *_args: response)
 
     def test_updates_rendering_state_without_changing_timestamps(self):
+        video_handle = threading.Lock()
         state = {
             "recog_res_raw": "raw text",
             "timestamp": [[1000, 3000], [3200, 5000]],
+            "video": video_handle,
             "sentences": [
                 {"text": "旧字幕一", "timestamp": [[1000, 3000]]},
                 {"text": "旧字幕二", "timestamp": [[3200, 5000]]},
@@ -64,6 +67,7 @@ class TestSubtitleCorrection(unittest.TestCase):
 
         self.assertEqual(updated["sentences"][1]["text"], "需要检查糖化血红蛋白")
         self.assertEqual(updated["sentences"][1]["timestamp"], [[3200, 5000]])
+        self.assertIs(updated["video"], video_handle)
         self.assertEqual(state["sentences"][1]["text"], "旧字幕二")
 
     def test_parse_rejects_non_srt_text(self):

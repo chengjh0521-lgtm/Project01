@@ -1,4 +1,3 @@
-import copy
 import json
 import re
 
@@ -184,7 +183,10 @@ def update_state_subtitles(state, corrected_srt):
 
     entries = parse_srt_entries(corrected_srt)
     texts = [entry["text"] for entry in entries]
-    updated_state = copy.deepcopy(state)
+    # VideoFileClip carries thread locks and cannot be deep-copied. Only subtitle
+    # records are mutable here; video/audio handles intentionally keep identity.
+    updated_state = dict(state)
+    copied_sentence_lists = {}
 
     def update_sentences(key, required):
         sentences = updated_state.get(key)
@@ -202,7 +204,19 @@ def update_state_subtitles(state, corrected_srt):
                     "The original subtitles were kept."
                 )
             return
-        for sentence, text in zip(eligible, texts):
+        original_sentences = state.get(key)
+        list_key = id(original_sentences)
+        if list_key not in copied_sentence_lists:
+            copied_sentence_lists[list_key] = [
+                dict(sentence) if isinstance(sentence, dict) else sentence
+                for sentence in original_sentences
+            ]
+        updated_state[key] = copied_sentence_lists[list_key]
+        copied_eligible = [
+            sentence for sentence in updated_state[key]
+            if isinstance(sentence, dict) and sentence.get("timestamp")
+        ]
+        for sentence, text in zip(copied_eligible, texts):
             sentence["text"] = text
 
     update_sentences("sentences", required=True)
