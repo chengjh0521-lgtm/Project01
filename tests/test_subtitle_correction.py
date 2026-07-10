@@ -28,27 +28,36 @@ SRT = """1
 
 class TestSubtitleCorrection(unittest.TestCase):
     def test_corrects_text_and_preserves_timeline_and_prefix(self):
-        def fake_call(user_content, _system_content):
-            payload = json.loads(user_content.split("\n", 1)[1])
-            payload["subtitles"][1]["text"] = "需要检查糖化血红蛋白"
-            return "```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
+        contexts = []
 
-        corrected, changed, total = correct_srt_with_llm(SRT, "校对医学术语", fake_call)
+        def fake_call(user_content, _system_content):
+            context = json.loads(user_content)
+            contexts.append(context)
+            corrected = context["current_subtitle"].replace(
+                "检察", "检查"
+            )
+            return "```json\n" + json.dumps(
+                {"text": corrected}, ensure_ascii=False
+            ) + "\n```"
+
+        corrected, changed, total = correct_srt_with_llm(
+            SRT, "校对医学术语", fake_call, max_workers=1
+        )
 
         self.assertEqual(changed, 1)
         self.assertEqual(total, 2)
+        self.assertEqual(len(contexts), 2)
+        self.assertEqual(contexts[0]["next_subtitle"], "需要检察糖化血红蛋白")
+        self.assertEqual(contexts[1]["previous_subtitle"], "这个病人血糖有点高")
+        self.assertNotIn("00:00:01,000", json.dumps(contexts, ensure_ascii=False))
         self.assertIn("2  spk0", corrected)
         self.assertIn("00:00:03,200 --> 00:00:05,000", corrected)
         self.assertIn("需要检查糖化血红蛋白", corrected)
         self.assertNotIn("需要检察糖化血红蛋白", corrected)
 
-    def test_rejects_response_that_omits_a_subtitle(self):
-        response = json.dumps(
-            {"subtitles": [{"id": 1, "text": "这个病人血糖有点高"}]},
-            ensure_ascii=False,
-        )
-        with self.assertRaisesRegex(SubtitleCorrectionError, "omitted"):
-            correct_srt_with_llm(SRT, "校对", lambda *_args: response)
+    def test_rejects_response_without_current_subtitle_text(self):
+        with self.assertRaisesRegex(SubtitleCorrectionError, "empty corrected"):
+            correct_srt_with_llm(SRT, "校对", lambda *_args: '{"text": ""}')
 
     def test_updates_rendering_state_without_changing_timestamps(self):
         video_handle = threading.Lock()

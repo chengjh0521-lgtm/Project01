@@ -50,7 +50,7 @@ After ASR finishes, open `DeepSeek 字幕修正 | Subtitle Correction`, adjust t
 The correction step:
 
 - uses the selected DeepSeek model and the saved DeepSeek API key
-- sends subtitle text to DeepSeek in validated chunks
+- sends each subtitle to DeepSeek as an individual correction request, with only adjacent subtitle text as context
 - keeps every SRT timestamp, subtitle number, and speaker marker unchanged
 - replaces the SRT textbox only after every returned subtitle passes validation
 - synchronizes corrected text into the clipping state so burned-in subtitles also use the correction
