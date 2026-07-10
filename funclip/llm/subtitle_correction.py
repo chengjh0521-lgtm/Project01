@@ -123,54 +123,46 @@ def _build_chunks(entries, max_entries=80, max_chars=12000):
 
 def correct_srt_with_llm(srt_text, correction_prompt, call_model):
     entries = parse_srt_entries(srt_text)
-    indexed_entries = [
-        {"id": index, "text": entry["text"]}
-        for index, entry in enumerate(entries, start=1)
-    ]
-    corrected_by_id = {}
+    subtitle_texts = [{"text": entry["text"]} for entry in entries]
+    corrected_texts = []
     system_content = (
         (correction_prompt or DEFAULT_SUBTITLE_CORRECTION_PROMPT).strip()
         + "\n\n必须遵守以下规则：只修正字幕文字；不得增删、合并、拆分或重新排序字幕；"
-        "每个 id 必须原样返回一次；不要输出时间戳。"
+        "输入数组和输出数组必须一一对应、顺序完全一致。不要输出编号或时间戳。"
         "只返回严格 JSON，格式为："
-        '{"subtitles":[{"id":1,"text":"修正后的字幕"}]}。'
+        '{"subtitles":[{"text":"修正后的字幕"}]}。'
     )
 
-    for chunk in _build_chunks(indexed_entries):
+    for chunk in _build_chunks(subtitle_texts):
         user_content = (
             "请校对下面这组连续字幕。只返回 JSON。\n"
             + json.dumps({"subtitles": chunk}, ensure_ascii=False)
         )
         response = call_model(user_content, system_content)
         corrections = _extract_json_payload(response)
-        expected_ids = {item["id"] for item in chunk}
-        chunk_values = {}
+        if len(corrections) != len(chunk):
+            raise SubtitleCorrectionError(
+                "DeepSeek omitted, added, or merged subtitle lines. The original subtitles were kept."
+            )
         for item in corrections:
             if not isinstance(item, dict):
                 raise SubtitleCorrectionError(
                     "DeepSeek returned an invalid subtitle item. The original subtitles were kept."
                 )
-            try:
-                item_id = int(item.get("id"))
-            except (TypeError, ValueError):
+            text = str(
+                item.get("text")
+                or item.get("corrected_text")
+                or item.get("corrected")
+                or ""
+            ).strip()
+            if not text:
                 raise SubtitleCorrectionError(
-                    "DeepSeek returned an invalid subtitle id. The original subtitles were kept."
+                    "DeepSeek returned an empty corrected subtitle. The original subtitles were kept."
                 )
-            text = str(item.get("text") or "").strip()
-            if item_id in chunk_values or item_id not in expected_ids or not text:
-                raise SubtitleCorrectionError(
-                    "DeepSeek changed, duplicated, or emptied a subtitle id. The original subtitles were kept."
-                )
-            chunk_values[item_id] = text
-        if set(chunk_values) != expected_ids:
-            raise SubtitleCorrectionError(
-                "DeepSeek omitted one or more subtitle lines. The original subtitles were kept."
-            )
-        corrected_by_id.update(chunk_values)
+            corrected_texts.append(text)
 
     changed_count = 0
-    for index, entry in enumerate(entries, start=1):
-        corrected_text = corrected_by_id[index]
+    for entry, corrected_text in zip(entries, corrected_texts):
         if corrected_text != entry["text"]:
             changed_count += 1
         entry["text"] = corrected_text
@@ -222,3 +214,4 @@ def update_state_subtitles(state, corrected_srt):
     update_sentences("sentences", required=True)
     update_sentences("sd_sentences", required=False)
     return updated_state
+
