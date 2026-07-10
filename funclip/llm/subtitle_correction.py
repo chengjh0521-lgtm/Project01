@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import re
 
@@ -59,7 +58,7 @@ def render_srt_entries(entries):
     return "\n\n".join(blocks) + "\n"
 
 
-def _decode_json_response(response_text):
+def _extract_json_payload(response_text):
     text = str(response_text or "").strip()
     if not text:
         raise SubtitleCorrectionError("DeepSeek returned an empty response.")
@@ -93,69 +92,85 @@ def _decode_json_response(response_text):
         raise SubtitleCorrectionError(
             "DeepSeek did not return valid JSON. The original subtitles were kept."
         )
+
+    if isinstance(payload, dict):
+        payload = payload.get("subtitles") or payload.get("corrections")
+    if not isinstance(payload, list):
+        raise SubtitleCorrectionError(
+            "DeepSeek JSON must contain a subtitles array. The original subtitles were kept."
+        )
     return payload
 
 
-def _extract_corrected_text(response_text):
-    payload = _decode_json_response(response_text)
-    if isinstance(payload, list):
-        if len(payload) != 1 or not isinstance(payload[0], dict):
-            raise SubtitleCorrectionError(
-                "DeepSeek returned more than one corrected subtitle. The original subtitles were kept."
-            )
-        payload = payload[0]
-    if not isinstance(payload, dict):
-        raise SubtitleCorrectionError(
-            "DeepSeek correction JSON must contain one text field. The original subtitles were kept."
-        )
-    text = str(
-        payload.get("text")
-        or payload.get("corrected_text")
-        or payload.get("corrected")
-        or ""
-    ).strip()
-    if not text:
-        raise SubtitleCorrectionError(
-            "DeepSeek returned an empty corrected subtitle. The original subtitles were kept."
-        )
-    return text
+def _build_chunks(entries, max_entries=80, max_chars=12000):
+    chunks = []
+    current = []
+    current_chars = 0
+    for item in entries:
+        item_chars = len(item["text"])
+        if current and (
+            len(current) >= max_entries or current_chars + item_chars > max_chars
+        ):
+            chunks.append(current)
+            current = []
+            current_chars = 0
+        current.append(item)
+        current_chars += item_chars
+    if current:
+        chunks.append(current)
+    return chunks
 
 
-def _subtitle_context(entries, index):
-    return {
-        "previous_subtitle": entries[index - 1]["text"] if index > 0 else "",
-        "current_subtitle": entries[index]["text"],
-        "next_subtitle": (
-            entries[index + 1]["text"] if index + 1 < len(entries) else ""
-        ),
-    }
-
-
-def correct_srt_with_llm(srt_text, correction_prompt, call_model, max_workers=3):
+def correct_srt_with_llm(srt_text, correction_prompt, call_model):
     entries = parse_srt_entries(srt_text)
+    indexed_entries = [
+        {"id": index, "text": entry["text"]}
+        for index, entry in enumerate(entries, start=1)
+    ]
+    corrected_by_id = {}
     system_content = (
         (correction_prompt or DEFAULT_SUBTITLE_CORRECTION_PROMPT).strip()
-        + "\n\n本次请求只校对 current_subtitle 一条字幕。previous_subtitle 和 next_subtitle "
-        "仅用于理解上下文，绝不能复述或修改它们。只修正当前字幕的文字，不扩写、不总结。"
-        "不要输出编号、时间戳或解释。只返回严格 JSON：{\"text\":\"修正后的当前字幕\"}。"
+        + "\n\n必须遵守以下规则：只修正字幕文字；不得增删、合并、拆分或重新排序字幕；"
+        "每个 id 必须原样返回一次；不要输出时间戳。"
+        "只返回严格 JSON，格式为："
+        '{"subtitles":[{"id":1,"text":"修正后的字幕"}]}。'
     )
 
-    def correct_one(index):
-        user_content = json.dumps(_subtitle_context(entries, index), ensure_ascii=False)
+    for chunk in _build_chunks(indexed_entries):
+        user_content = (
+            "请校对下面这组连续字幕。只返回 JSON。\n"
+            + json.dumps({"subtitles": chunk}, ensure_ascii=False)
+        )
         response = call_model(user_content, system_content)
-        return index, _extract_corrected_text(response)
-
-    corrected_by_index = {}
-    worker_count = max(1, min(int(max_workers or 1), len(entries)))
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = [executor.submit(correct_one, index) for index in range(len(entries))]
-        for future in as_completed(futures):
-            index, corrected_text = future.result()
-            corrected_by_index[index] = corrected_text
+        corrections = _extract_json_payload(response)
+        expected_ids = {item["id"] for item in chunk}
+        chunk_values = {}
+        for item in corrections:
+            if not isinstance(item, dict):
+                raise SubtitleCorrectionError(
+                    "DeepSeek returned an invalid subtitle item. The original subtitles were kept."
+                )
+            try:
+                item_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                raise SubtitleCorrectionError(
+                    "DeepSeek returned an invalid subtitle id. The original subtitles were kept."
+                )
+            text = str(item.get("text") or "").strip()
+            if item_id in chunk_values or item_id not in expected_ids or not text:
+                raise SubtitleCorrectionError(
+                    "DeepSeek changed, duplicated, or emptied a subtitle id. The original subtitles were kept."
+                )
+            chunk_values[item_id] = text
+        if set(chunk_values) != expected_ids:
+            raise SubtitleCorrectionError(
+                "DeepSeek omitted one or more subtitle lines. The original subtitles were kept."
+            )
+        corrected_by_id.update(chunk_values)
 
     changed_count = 0
-    for index, entry in enumerate(entries):
-        corrected_text = corrected_by_index[index]
+    for index, entry in enumerate(entries, start=1):
+        corrected_text = corrected_by_id[index]
         if corrected_text != entry["text"]:
             changed_count += 1
         entry["text"] = corrected_text
