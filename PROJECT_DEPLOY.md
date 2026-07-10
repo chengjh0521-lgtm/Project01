@@ -50,7 +50,7 @@ After ASR finishes, open `DeepSeek 字幕修正 | Subtitle Correction`, adjust t
 The correction step:
 
 - uses the selected DeepSeek model and the saved DeepSeek API key
-- sends subtitle text to DeepSeek in validated chunks
+- sends subtitle batches to DeepSeek as `N. [start-end] text` lines and only uses exact original timestamp ranges to locate corrected text
 - keeps every SRT timestamp, subtitle number, and speaker marker unchanged
 - replaces the SRT textbox only after every returned subtitle passes validation
 - synchronizes corrected text into the clipping state so burned-in subtitles also use the correction
@@ -201,3 +201,4 @@ Timestamp ranges in `LLM Clipper Result` can use standard SRT arrows or bracket 
 You can also edit `Subtitle Highlight Terms` manually. Put one term per line, or separate terms with commas.
 
 The highlight terms and color are applied in `Preview Subtitle`, `Clip+Subtitles`, and `AI Clip+Subtitles`.
+
