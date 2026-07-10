@@ -837,7 +837,7 @@ if __name__ == "__main__":
 
         deepseek_model = model if str(model or "").startswith("deepseek") else DEFAULT_LLM_MODEL
         try:
-            corrected_srt, changed_count, total_count = correct_srt_with_llm(
+            corrected_srt, changed_count, total_count, matched_count = correct_srt_with_llm(
                 srt_text,
                 correction_prompt,
                 lambda user_content, system_content: openai_call(
@@ -861,7 +861,7 @@ if __name__ == "__main__":
                 corrected_out.write(corrected_srt)
 
             status = (
-                f"字幕修正完成：共检查 {total_count} 条，修改 {changed_count} 条。"
+                f"字幕修正完成：匹配 {matched_count}/{total_count} 条，修改 {changed_count} 条。"
                 f"已使用 {deepseek_model}，时间轴保持不变。后续 LLM 切片将自动使用修正版。"
             )
             return (
