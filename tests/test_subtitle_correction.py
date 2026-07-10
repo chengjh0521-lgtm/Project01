@@ -30,7 +30,12 @@ class TestSubtitleCorrection(unittest.TestCase):
     def test_corrects_text_and_preserves_timeline_and_prefix(self):
         def fake_call(user_content, _system_content):
             payload = json.loads(user_content.split("\n", 1)[1])
+            self.assertNotIn("id", payload["subtitles"][0])
             payload["subtitles"][1]["text"] = "需要检查糖化血红蛋白"
+            # DeepSeek sometimes adds a repeated id. Order, rather than that id,
+            # must remain the source of truth for a whole subtitle batch.
+            payload["subtitles"][0]["id"] = 1
+            payload["subtitles"][1]["id"] = 1
             return "```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
 
         corrected, changed, total = correct_srt_with_llm(SRT, "校对医学术语", fake_call)
@@ -42,12 +47,12 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertIn("需要检查糖化血红蛋白", corrected)
         self.assertNotIn("需要检察糖化血红蛋白", corrected)
 
-    def test_rejects_response_that_omits_a_subtitle(self):
+    def test_rejects_response_that_changes_subtitle_count(self):
         response = json.dumps(
             {"subtitles": [{"id": 1, "text": "这个病人血糖有点高"}]},
             ensure_ascii=False,
         )
-        with self.assertRaisesRegex(SubtitleCorrectionError, "omitted"):
+        with self.assertRaisesRegex(SubtitleCorrectionError, "omitted, added, or merged"):
             correct_srt_with_llm(SRT, "校对", lambda *_args: response)
 
     def test_updates_rendering_state_without_changing_timestamps(self):
