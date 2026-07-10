@@ -26,7 +26,7 @@ You can either paste the DeepSeek API key in the UI, or set:
 set DEEPSEEK_API_KEY=your_api_key
 ```
 
-The UI has a `保存提示词/API | Save Settings` button. It saves the current system prompt, user prompt, selected model, and API key to:
+The UI has a `保存提示词/API | Save Settings` button. It saves the current system prompt, user prompt, subtitle correction prompt, selected model, and API key to:
 
 ```text
 user_settings.json
@@ -42,6 +42,21 @@ The same button also saves subtitle settings used after refresh:
 - subtitle highlight prompt
 - expected subtitle highlight count
 - sound effect word bindings
+
+## DeepSeek Subtitle Correction
+
+After ASR finishes, open `DeepSeek 字幕修正 | Subtitle Correction`, adjust the exposed correction prompt if needed, and click `使用 DeepSeek 修正字幕 | Correct Subtitles` before LLM clipping.
+
+The correction step:
+
+- uses the selected DeepSeek model and the saved DeepSeek API key
+- sends subtitle text to DeepSeek in validated chunks
+- keeps every SRT timestamp, subtitle number, and speaker marker unchanged
+- replaces the SRT textbox only after every returned subtitle passes validation
+- synchronizes corrected text into the clipping state so burned-in subtitles also use the correction
+- writes a downloadable `subtitle_corrected_*.srt` file to `File Output Dir`
+
+The correction prompt is saved by the existing `Save Settings` button and is loaded again after a restart or browser refresh.
 
 ## Output And Temp Files
 

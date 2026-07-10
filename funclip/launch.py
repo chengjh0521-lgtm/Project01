@@ -24,6 +24,12 @@ from videoclipper import VideoClipper, _open_video_preserving_display, _subtitle
 from llm.openai_api import openai_call
 from llm.qwen_api import call_qwen_model
 from llm.g4f_openai_api import g4f_openai_call
+from llm.subtitle_correction import (
+    DEFAULT_SUBTITLE_CORRECTION_PROMPT,
+    SubtitleCorrectionError,
+    correct_srt_with_llm,
+    update_state_subtitles,
+)
 from llm.twelvelabs_api import call_twelvelabs_pegasus
 from utils.trans_utils import extract_timestamps, load_state, write_state
 from introduction import top_md_1, top_md_3, top_md_4
@@ -432,7 +438,7 @@ if __name__ == "__main__":
         return f"Downloaded to local_videos/{filename}", gr.update(choices=choices, value=filename)
 
     def save_llm_settings(
-            prompt_system, prompt_user, model, apikey, highlight_prompt,
+            prompt_system, prompt_user, model, apikey, subtitle_correction_prompt, highlight_prompt,
             highlight_count, font_size, font_color, subtitle_x, subtitle_y, highlight_color,
             sound_effect_rules, selected_sfx, selected_sfx_terms):
         settings = load_user_settings()
@@ -446,6 +452,9 @@ if __name__ == "__main__":
             "prompt_user": prompt_user or "",
             "llm_model": model or DEFAULT_LLM_MODEL,
             "apikey": apikey or "",
+            "subtitle_correction_prompt": (
+                subtitle_correction_prompt or DEFAULT_SUBTITLE_CORRECTION_PROMPT
+            ),
             "highlight_prompt": highlight_prompt or DEFAULT_HIGHLIGHT_PROMPT,
             "highlight_count": saved_highlight_count,
             "subtitle_font_size": font_size,
@@ -817,6 +826,61 @@ if __name__ == "__main__":
             logging.error("LLM name error, only {} are supported as LLM name prefix."
                           .format(SUPPORT_LLM_PREFIX))
 
+    def correct_subtitles_with_deepseek(
+            srt_text, correction_prompt, model, apikey,
+            video_state, audio_state, output_dir):
+        if not str(srt_text or "").strip():
+            return (
+                gr.update(), gr.update(), gr.update(), gr.update(),
+                "请先完成 ASR 识别，再进行字幕修正。",
+            )
+
+        deepseek_model = model if str(model or "").startswith("deepseek") else DEFAULT_LLM_MODEL
+        try:
+            corrected_srt, changed_count, total_count = correct_srt_with_llm(
+                srt_text,
+                correction_prompt,
+                lambda user_content, system_content: openai_call(
+                    apikey, deepseek_model, user_content, system_content
+                ),
+            )
+            corrected_video_state = update_state_subtitles(video_state, corrected_srt)
+            corrected_audio_state = update_state_subtitles(audio_state, corrected_srt)
+
+            target_dir = str(output_dir or "").strip()
+            if target_dir:
+                target_dir = os.path.abspath(target_dir)
+                os.makedirs(target_dir, exist_ok=True)
+            else:
+                target_dir = tempfile.gettempdir()
+            corrected_file = os.path.join(
+                target_dir,
+                f"subtitle_corrected_{datetime.now().strftime('%Y%m%d_%H%M%S')}.srt",
+            )
+            with open(corrected_file, "w", encoding="utf-8") as corrected_out:
+                corrected_out.write(corrected_srt)
+
+            status = (
+                f"字幕修正完成：共检查 {total_count} 条，修改 {changed_count} 条。"
+                f"已使用 {deepseek_model}，时间轴保持不变。后续 LLM 切片将自动使用修正版。"
+            )
+            return (
+                corrected_srt,
+                corrected_video_state if video_state is not None else gr.update(),
+                corrected_audio_state if audio_state is not None else gr.update(),
+                corrected_file,
+                status,
+            )
+        except SubtitleCorrectionError as exc:
+            logging.warning("Subtitle correction rejected: %s", exc)
+            return gr.update(), gr.update(), gr.update(), gr.update(), f"字幕修正失败：{exc}"
+        except Exception as exc:
+            logging.exception("Subtitle correction failed.")
+            return (
+                gr.update(), gr.update(), gr.update(), gr.update(),
+                f"字幕修正失败：{exc}。原字幕未被覆盖。",
+            )
+
     def llm_subtitle_highlights(llm_clip_result, srt_text, model, apikey, highlight_prompt, highlight_count):
         srt_text = (srt_text or "").strip()
         if not srt_text:
@@ -965,6 +1029,27 @@ if __name__ == "__main__":
                 with gr.Row():
                     video_text_file = gr.File(label="⬇️ 下载识别结果 | Download Recognition Result", interactive=False)
                     video_srt_file = gr.File(label="⬇️ 下载SRT字幕 | Download SRT Subtitles", interactive=False)
+                with gr.Accordion("DeepSeek 字幕修正 | Subtitle Correction", open=True):
+                    subtitle_correction_prompt = gr.Textbox(
+                        label="字幕修正提示词 | Correction Prompt",
+                        value=(
+                            user_settings.get("subtitle_correction_prompt")
+                            or DEFAULT_SUBTITLE_CORRECTION_PROMPT
+                        ),
+                        lines=5,
+                    )
+                    subtitle_correction_button = gr.Button(
+                        "使用 DeepSeek 修正字幕 | Correct Subtitles",
+                        variant="primary",
+                    )
+                    subtitle_correction_status = gr.Textbox(
+                        label="字幕修正状态 | Correction Status",
+                        interactive=False,
+                    )
+                    corrected_srt_file = gr.File(
+                        label="下载修正后的 SRT | Download Corrected SRT",
+                        interactive=False,
+                    )
             with gr.Column():
                 with gr.Tab("🧠 LLM智能裁剪 | LLM Clipping"):
                     with gr.Column():
@@ -1100,7 +1185,8 @@ if __name__ == "__main__":
                             outputs=[download_video_status, local_video_input])
         save_settings_button.click(
                             save_llm_settings,
-                            inputs=[prompt_head, prompt_head2, llm_model, apikey_input, highlight_prompt,
+                            inputs=[prompt_head, prompt_head2, llm_model, apikey_input,
+                                    subtitle_correction_prompt, highlight_prompt,
                                     highlight_count, font_size, font_color, subtitle_x, subtitle_y, highlight_color,
                                     sound_effect_rules, local_sfx_list, selected_sfx_terms],
                             outputs=[save_settings_status])
@@ -1128,6 +1214,12 @@ if __name__ == "__main__":
                             query_asr_task,
                             inputs=[asr_job_id],
                             outputs=[asr_task_status, video_text_output, video_srt_output, video_state, audio_state, video_text_file, video_srt_file, asr_job_id])
+        subtitle_correction_button.click(
+                            correct_subtitles_with_deepseek,
+                            inputs=[video_srt_output, subtitle_correction_prompt, llm_model,
+                                    apikey_input, video_state, audio_state, output_dir],
+                            outputs=[video_srt_output, video_state, audio_state,
+                                     corrected_srt_file, subtitle_correction_status])
         subtitle_preview_button.click(
                             preview_subtitle,
                             inputs=[local_video_input, video_input, subtitle_sample_text, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color],
