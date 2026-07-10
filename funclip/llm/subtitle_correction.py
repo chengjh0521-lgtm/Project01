@@ -1,4 +1,3 @@
-import json
 import re
 
 
@@ -10,6 +9,16 @@ DEFAULT_SUBTITLE_CORRECTION_PROMPT = (
 _TIMESTAMP_RE = re.compile(
     r"^\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->\s*"
     r"\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}(?:\s+.*)?$"
+)
+_TIMESTAMP_RANGE_RE = re.compile(
+    r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
+    r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})"
+)
+_CORRECTION_LINE_RE = re.compile(
+    r"^\s*(?:\d+[.、)]\s*)?\[\s*"
+    r"(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-\s*"
+    r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*\]\s*"
+    r"(?P<text>.+?)\s*$"
 )
 
 
@@ -58,7 +67,18 @@ def render_srt_entries(entries):
     return "\n\n".join(blocks) + "\n"
 
 
-def _extract_json_payload(response_text):
+def _normalize_timestamp(time_text):
+    return str(time_text).strip().replace(".", ",")
+
+
+def _entry_timestamp_range(entry):
+    match = _TIMESTAMP_RANGE_RE.match(entry["timestamp"])
+    if not match:
+        raise SubtitleCorrectionError("Invalid SRT timestamp line.")
+    return _normalize_timestamp(match.group("start")), _normalize_timestamp(match.group("end"))
+
+
+def _parse_correction_lines(response_text):
     text = str(response_text or "").strip()
     if not text:
         raise SubtitleCorrectionError("DeepSeek returned an empty response.")
@@ -68,38 +88,29 @@ def _extract_json_payload(response_text):
     ):
         raise SubtitleCorrectionError(text)
 
-    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+    fenced = re.search(r"```(?:text)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
     if fenced:
         text = fenced.group(1).strip()
 
-    candidates = []
-    object_start, object_end = text.find("{"), text.rfind("}")
-    array_start, array_end = text.find("["), text.rfind("]")
-    if object_start >= 0 and object_end > object_start:
-        candidates.append(text[object_start : object_end + 1])
-    if array_start >= 0 and array_end > array_start:
-        candidates.append(text[array_start : array_end + 1])
-    candidates.append(text)
-
-    payload = None
-    for candidate in candidates:
-        try:
-            payload = json.loads(candidate)
-            break
-        except json.JSONDecodeError:
+    corrections = []
+    for line in text.splitlines():
+        match = _CORRECTION_LINE_RE.match(line)
+        if not match:
             continue
-    if payload is None:
+        corrected_text = match.group("text").strip()
+        if corrected_text:
+            corrections.append(
+                (
+                    _normalize_timestamp(match.group("start")),
+                    _normalize_timestamp(match.group("end")),
+                    corrected_text,
+                )
+            )
+    if not corrections:
         raise SubtitleCorrectionError(
-            "DeepSeek did not return valid JSON. The original subtitles were kept."
+            "DeepSeek did not return subtitle lines in the required timestamp format."
         )
-
-    if isinstance(payload, dict):
-        payload = payload.get("subtitles") or payload.get("corrections")
-    if not isinstance(payload, list):
-        raise SubtitleCorrectionError(
-            "DeepSeek JSON must contain a subtitles array. The original subtitles were kept."
-        )
-    return payload
+    return corrections
 
 
 def _build_chunks(entries, max_entries=80, max_chars=12000):
@@ -123,50 +134,53 @@ def _build_chunks(entries, max_entries=80, max_chars=12000):
 
 def correct_srt_with_llm(srt_text, correction_prompt, call_model):
     entries = parse_srt_entries(srt_text)
-    subtitle_texts = [{"text": entry["text"]} for entry in entries]
-    corrected_texts = []
     system_content = (
         (correction_prompt or DEFAULT_SUBTITLE_CORRECTION_PROMPT).strip()
         + "\n\n必须遵守以下规则：只修正字幕文字；不得增删、合并、拆分或重新排序字幕；"
-        "输入数组和输出数组必须一一对应、顺序完全一致。不要输出编号或时间戳。"
-        "只返回严格 JSON，格式为："
-        '{"subtitles":[{"text":"修正后的字幕"}]}。'
+        "每一行必须原样保留输入中的开始时间和结束时间，且顺序完全一致。"
+        "输出格式严格如下：\n"
+        "1. [开始时间-结束时间] 文本\n"
+        "2. [开始时间-结束时间] 文本\n"
+        "3. [开始时间-结束时间] 文本\n"
+        "除上述内容外，不输出任何解释、分析、总结或额外文字。"
     )
 
-    for chunk in _build_chunks(subtitle_texts):
+    corrected_by_range = {}
+    for entry in entries:
+        corrected_by_range.setdefault(_entry_timestamp_range(entry), []).append(entry)
+
+    matched_count = 0
+    for chunk in _build_chunks(entries):
+        source_lines = []
+        for index, entry in enumerate(chunk, start=1):
+            start_time, end_time = _entry_timestamp_range(entry)
+            source_text = " ".join(entry["text"].splitlines()).strip()
+            source_lines.append(f"{index}. [{start_time}-{end_time}] {source_text}")
         user_content = (
-            "请校对下面这组连续字幕。只返回 JSON。\n"
-            + json.dumps({"subtitles": chunk}, ensure_ascii=False)
+            "请校对下面这组连续字幕。只返回指定格式。\n"
+            + "\n".join(source_lines)
         )
         response = call_model(user_content, system_content)
-        corrections = _extract_json_payload(response)
-        if len(corrections) != len(chunk):
-            raise SubtitleCorrectionError(
-                "DeepSeek omitted, added, or merged subtitle lines. The original subtitles were kept."
-            )
-        for item in corrections:
-            if not isinstance(item, dict):
-                raise SubtitleCorrectionError(
-                    "DeepSeek returned an invalid subtitle item. The original subtitles were kept."
-                )
-            text = str(
-                item.get("text")
-                or item.get("corrected_text")
-                or item.get("corrected")
-                or ""
-            ).strip()
-            if not text:
-                raise SubtitleCorrectionError(
-                    "DeepSeek returned an empty corrected subtitle. The original subtitles were kept."
-                )
-            corrected_texts.append(text)
+        for start_time, end_time, corrected_text in _parse_correction_lines(response):
+            matching_entries = corrected_by_range.get((start_time, end_time))
+            if not matching_entries:
+                continue
+            entry = matching_entries.pop(0)
+            entry["corrected_text"] = corrected_text
+            matched_count += 1
+
+    if not matched_count:
+        raise SubtitleCorrectionError(
+            "No DeepSeek subtitle timestamps matched the original SRT."
+        )
 
     changed_count = 0
-    for entry, corrected_text in zip(entries, corrected_texts):
+    for entry in entries:
+        corrected_text = entry.pop("corrected_text", entry["text"])
         if corrected_text != entry["text"]:
             changed_count += 1
         entry["text"] = corrected_text
-    return render_srt_entries(entries), changed_count, len(entries)
+    return render_srt_entries(entries), changed_count, len(entries), matched_count
 
 
 def update_state_subtitles(state, corrected_srt):
