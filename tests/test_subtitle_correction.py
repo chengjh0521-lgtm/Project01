@@ -1,4 +1,3 @@
-import json
 import sys
 import threading
 import unittest
@@ -29,31 +28,32 @@ SRT = """1
 class TestSubtitleCorrection(unittest.TestCase):
     def test_corrects_text_and_preserves_timeline_and_prefix(self):
         def fake_call(user_content, _system_content):
-            payload = json.loads(user_content.split("\n", 1)[1])
-            self.assertNotIn("id", payload["subtitles"][0])
-            payload["subtitles"][1]["text"] = "需要检查糖化血红蛋白"
-            # DeepSeek sometimes adds a repeated id. Order, rather than that id,
-            # must remain the source of truth for a whole subtitle batch.
-            payload["subtitles"][0]["id"] = 1
-            payload["subtitles"][1]["id"] = 1
-            return "```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
+            self.assertIn("[00:00:01,000-00:00:03,000]", user_content)
+            self.assertIn("[00:00:03,200-00:00:05,000]", user_content)
+            return (
+                "1. [00:00:01,000-00:00:03,000] 这个病人血糖有点高\n"
+                "2. [00:00:03,200-00:00:05,000] 需要检查糖化血红蛋白"
+            )
 
-        corrected, changed, total = correct_srt_with_llm(SRT, "校对医学术语", fake_call)
+        corrected, changed, total, matched = correct_srt_with_llm(SRT, "校对医学术语", fake_call)
 
         self.assertEqual(changed, 1)
         self.assertEqual(total, 2)
+        self.assertEqual(matched, 2)
         self.assertIn("2  spk0", corrected)
         self.assertIn("00:00:03,200 --> 00:00:05,000", corrected)
         self.assertIn("需要检查糖化血红蛋白", corrected)
         self.assertNotIn("需要检察糖化血红蛋白", corrected)
 
-    def test_rejects_response_that_changes_subtitle_count(self):
-        response = json.dumps(
-            {"subtitles": [{"id": 1, "text": "这个病人血糖有点高"}]},
-            ensure_ascii=False,
+    def test_keeps_unmatched_subtitles_unchanged(self):
+        response = "1. [00:00:03,200-00:00:05,000] 需要检查糖化血红蛋白"
+        corrected, changed, total, matched = correct_srt_with_llm(
+            SRT, "校对", lambda *_args: response
         )
-        with self.assertRaisesRegex(SubtitleCorrectionError, "omitted, added, or merged"):
-            correct_srt_with_llm(SRT, "校对", lambda *_args: response)
+        self.assertEqual(changed, 1)
+        self.assertEqual(total, 2)
+        self.assertEqual(matched, 1)
+        self.assertIn("这个病人血糖有点高", corrected)
 
     def test_updates_rendering_state_without_changing_timestamps(self):
         video_handle = threading.Lock()
