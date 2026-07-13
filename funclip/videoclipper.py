@@ -13,6 +13,7 @@ import librosa
 import logging
 import argparse
 import subprocess
+from datetime import datetime
 import numpy as np
 import soundfile as sf
 from PIL import Image, ImageColor, ImageDraw, ImageFont
@@ -891,17 +892,22 @@ class VideoClipper():
             )
             if sound_effect_count:
                 message += "; {} sound effects mixed".format(sound_effect_count)
+            output_id = "{}_no{}".format(
+                datetime.now().strftime("%Y%m%d_%H%M%S_%f"),
+                self.GLOBAL_COUNT,
+            )
             # clip_video_file = clip_video_file[:-4] + '_no{}.mp4'.format(self.GLOBAL_COUNT)
             if output_dir is not None:
                 os.makedirs(output_dir, exist_ok=True)
                 _, file_with_extension = os.path.split(clip_video_file)
                 clip_video_file_name, _ = os.path.splitext(file_with_extension)
                 print(output_dir, clip_video_file)
-                clip_video_file = os.path.join(output_dir, "{}_no{}.mp4".format(clip_video_file_name, self.GLOBAL_COUNT))
-                temp_audio_file = os.path.join(output_dir, "{}_tempaudio_no{}.mp4".format(clip_video_file_name, self.GLOBAL_COUNT))
+                clip_video_file = os.path.join(output_dir, "{}_{}.mp4".format(clip_video_file_name, output_id))
+                temp_audio_file = os.path.join(output_dir, "{}_tempaudio_{}.mp4".format(clip_video_file_name, output_id))
             else:
-                clip_video_file = clip_video_file[:-4] + '_no{}.mp4'.format(self.GLOBAL_COUNT)
-                temp_audio_file = clip_video_file[:-4] + '_tempaudio_no{}.mp4'.format(self.GLOBAL_COUNT)
+                clip_video_base = clip_video_file[:-4]
+                clip_video_file = clip_video_base + '_{}.mp4'.format(output_id)
+                temp_audio_file = clip_video_base + '_tempaudio_{}.mp4'.format(output_id)
             video_clip.write_videofile(
                 clip_video_file,
                 codec="libx264",
