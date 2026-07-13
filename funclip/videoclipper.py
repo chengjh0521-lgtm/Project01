@@ -659,6 +659,7 @@ class VideoClipper():
 
         if timestamp_list is None:
             all_ts = []
+            log_append = ""
             if dest_spk is None or dest_spk == '' or 'sd_sentences' not in state:
                 for _dest_text in dest_text.split('#'):
                     if '[' in _dest_text:
@@ -685,7 +686,10 @@ class VideoClipper():
                     for _ts in ts: all_ts.append(_ts)
                 log_append = ""
         else:
-            all_ts = timestamp_list
+            # LLM timestamp ranges are milliseconds; audio slicing uses 16 kHz
+            # sample indices.
+            log_append = ""
+            all_ts = [[start_ms * 16, end_ms * 16] for start_ms, end_ms in timestamp_list]
         ts = all_ts
         # ts.sort()
         srt_index = 0
