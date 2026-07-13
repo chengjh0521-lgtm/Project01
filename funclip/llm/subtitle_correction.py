@@ -71,11 +71,37 @@ def _normalize_timestamp(time_text):
     return str(time_text).strip().replace(".", ",")
 
 
+def _timestamp_to_millis(time_text):
+    hours, minutes, seconds_and_millis = _normalize_timestamp(time_text).split(":")
+    seconds, millis = seconds_and_millis.split(",")
+    return (
+        int(hours) * 3_600_000
+        + int(minutes) * 60_000
+        + int(seconds) * 1_000
+        + int(millis.ljust(3, "0")[:3])
+    )
+
+
 def _entry_timestamp_range(entry):
     match = _TIMESTAMP_RANGE_RE.match(entry["timestamp"])
     if not match:
         raise SubtitleCorrectionError("Invalid SRT timestamp line.")
     return _normalize_timestamp(match.group("start")), _normalize_timestamp(match.group("end"))
+
+
+def _entry_timestamp_millis_range(entry):
+    start_time, end_time = _entry_timestamp_range(entry)
+    return _timestamp_to_millis(start_time), _timestamp_to_millis(end_time)
+
+
+def _sentence_timestamp_millis_range(sentence):
+    timestamps = sentence.get("timestamp") if isinstance(sentence, dict) else None
+    if not isinstance(timestamps, list) or not timestamps:
+        return None
+    try:
+        return int(timestamps[0][0]), int(timestamps[-1][1])
+    except (IndexError, TypeError, ValueError):
+        return None
 
 
 def _parse_correction_lines(response_text):
@@ -185,32 +211,23 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
 
 def update_state_subtitles(state, corrected_srt):
     if state is None:
-        return None
+        return None, 0
 
     entries = parse_srt_entries(corrected_srt)
-    texts = [entry["text"] for entry in entries]
+    texts_by_range = {
+        _entry_timestamp_millis_range(entry): entry["text"]
+        for entry in entries
+    }
     # VideoFileClip carries thread locks and cannot be deep-copied. Only subtitle
     # records are mutable here; video/audio handles intentionally keep identity.
     updated_state = dict(state)
     copied_sentence_lists = {}
 
-    def update_sentences(key, required):
+    def update_sentences(key):
+        original_sentences = state.get(key)
         sentences = updated_state.get(key)
         if not isinstance(sentences, list):
-            if required:
-                raise SubtitleCorrectionError(
-                    "The recognition state has no subtitle sentence list."
-                )
-            return
-        eligible = [sentence for sentence in sentences if sentence.get("timestamp")]
-        if len(eligible) != len(texts):
-            if required:
-                raise SubtitleCorrectionError(
-                    "Corrected subtitle count does not match the recognition state. "
-                    "The original subtitles were kept."
-                )
-            return
-        original_sentences = state.get(key)
+            return 0
         list_key = id(original_sentences)
         if list_key not in copied_sentence_lists:
             copied_sentence_lists[list_key] = [
@@ -218,13 +235,15 @@ def update_state_subtitles(state, corrected_srt):
                 for sentence in original_sentences
             ]
         updated_state[key] = copied_sentence_lists[list_key]
-        copied_eligible = [
-            sentence for sentence in updated_state[key]
-            if isinstance(sentence, dict) and sentence.get("timestamp")
-        ]
-        for sentence, text in zip(copied_eligible, texts):
-            sentence["text"] = text
+        synced = 0
+        for sentence in updated_state[key]:
+            timestamp_range = _sentence_timestamp_millis_range(sentence)
+            corrected_text = texts_by_range.get(timestamp_range)
+            if corrected_text is not None:
+                sentence["text"] = corrected_text
+                synced += 1
+        return synced
 
-    update_sentences("sentences", required=True)
-    update_sentences("sd_sentences", required=False)
-    return updated_state
+    sentence_sync_count = update_sentences("sentences")
+    speaker_sync_count = update_sentences("sd_sentences")
+    return updated_state, max(sentence_sync_count, speaker_sync_count)

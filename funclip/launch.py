@@ -844,8 +844,8 @@ if __name__ == "__main__":
                     apikey, deepseek_model, user_content, system_content
                 ),
             )
-            corrected_video_state = update_state_subtitles(video_state, corrected_srt)
-            corrected_audio_state = update_state_subtitles(audio_state, corrected_srt)
+            corrected_video_state, video_sync_count = update_state_subtitles(video_state, corrected_srt)
+            corrected_audio_state, audio_sync_count = update_state_subtitles(audio_state, corrected_srt)
 
             target_dir = str(output_dir or "").strip()
             if target_dir:
@@ -862,6 +862,7 @@ if __name__ == "__main__":
 
             status = (
                 f"字幕修正完成：匹配 {matched_count}/{total_count} 条，修改 {changed_count} 条。"
+                f"烧录字幕状态同步 {max(video_sync_count, audio_sync_count)} 条。"
                 f"已使用 {deepseek_model}，时间轴保持不变。后续 LLM 切片将自动使用修正版。"
             )
             return (
