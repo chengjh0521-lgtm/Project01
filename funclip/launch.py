@@ -1056,10 +1056,22 @@ if __name__ == "__main__":
         composed.alpha_composite(subtitle_image, (int(x), int(y)))
         return composed.convert("RGB")
 
+    def _canonical_srt(srt_text=None, video_state=None, audio_state=None):
+        for state in (video_state, audio_state):
+            if isinstance(state, dict):
+                canonical = str(state.get("canonical_subtitle_srt") or "").strip()
+                if canonical:
+                    return canonical
+        return str(srt_text or "").strip()
+
+    def _subtitle_fingerprint(srt_text):
+        return hashlib.sha256(str(srt_text or "").encode("utf-8")).hexdigest()[:12]
+
     def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, subtitle_srt, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
         output_dir = output_dir.strip()
         sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
-        if state is not None and str(subtitle_srt or "").strip():
+        subtitle_srt = _canonical_srt(subtitle_srt, video_state=state)
+        if state is not None and subtitle_srt:
             state, _ = update_state_subtitles(state, subtitle_srt)
         if not len(output_dir):
             output_dir = None
@@ -1075,7 +1087,8 @@ if __name__ == "__main__":
             subtitle_srt_text=subtitle_srt
             )
         
-    def llm_inference(system_content, user_content, srt_text, model, apikey, video_input=None):
+    def llm_inference(system_content, user_content, srt_text, model, apikey, video_input=None, video_state=None, audio_state=None):
+        srt_text = _canonical_srt(srt_text, video_state, audio_state)
         SUPPORT_LLM_PREFIX = ['qwen', 'gpt', 'g4f', 'moonshot', 'deepseek', 'pegasus']
         format_instruction = (
             "\n\nSelect subtitle-aligned highlight material by content quality, not by a fixed duration. "
@@ -1163,8 +1176,8 @@ if __name__ == "__main__":
                 f"字幕修正失败：{exc}。原字幕未被覆盖。",
             )
 
-    def llm_subtitle_highlights(llm_clip_result, srt_text, model, apikey, highlight_prompt, highlight_count):
-        srt_text = (srt_text or "").strip()
+    def llm_subtitle_highlights(llm_clip_result, srt_text, model, apikey, highlight_prompt, highlight_count, video_state=None, audio_state=None):
+        srt_text = _canonical_srt(srt_text, video_state, audio_state)
         if not srt_text:
             return "Please run ASR first so the SRT subtitles are available."
         timestamp_list = extract_timestamps(llm_clip_result)
@@ -1247,7 +1260,8 @@ if __name__ == "__main__":
             output_dir = None
         else:
             output_dir = os.path.abspath(output_dir)
-        if str(subtitle_srt or "").strip():
+        subtitle_srt = _canonical_srt(subtitle_srt, video_state, audio_state)
+        if subtitle_srt:
             video_state, _ = update_state_subtitles(video_state, subtitle_srt)
             audio_state, _ = update_state_subtitles(audio_state, subtitle_srt)
         if video_state is not None:
