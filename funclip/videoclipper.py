@@ -801,7 +801,7 @@ class VideoClipper():
             )
         if use_authoritative_srt:
             logging.warning(
-                "Burned-in subtitles use the explicitly supplied corrected SRT "
+                "Burned-in subtitles use the explicitly supplied subtitle SRT "
                 "exclusively (%d cues).",
                 len(authoritative_subtitle_cues),
             )
@@ -918,7 +918,7 @@ class VideoClipper():
                 time_acc_ost += end - start
             message = "{} periods found in the audio: ".format(len(ts)) + start_end_info
             if use_authoritative_srt:
-                message += "; burned captions source: explicit corrected SRT ({} cues)".format(
+                message += "; burned captions source: explicit subtitle SRT ({} cues)".format(
                     len(authoritative_subtitle_cues)
                 )
             logging.warning("Concating...")
