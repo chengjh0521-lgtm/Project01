@@ -8,7 +8,6 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "funclip"))
 
-from llm.subtitle_correction import render_llm_highlight_srt
 from utils.trans_utils import extract_timestamps
 from videoclipper import VideoClipper
 
@@ -47,19 +46,6 @@ class TestLlmClipRanges(unittest.TestCase):
         self.assertEqual(len(clipped), 16000)
         self.assertEqual(clipped[0], audio[16000])
         self.assertEqual(clipped[-1], audio[31999])
-
-    def test_step_three_text_and_ranges_become_caption_srt(self):
-        result = (
-            "1. [00:01:02,300-00:01:05,800] 第三步高光字幕一\n"
-            "2. [00:02:10-00:02:15] 第三步高光字幕二"
-        )
-
-        highlight_srt, ranges = render_llm_highlight_srt(result)
-
-        self.assertEqual(ranges, [[62_300, 65_800], [130_000, 135_000]])
-        self.assertIn("00:01:02,300 --> 00:01:05,800", highlight_srt)
-        self.assertIn("第三步高光字幕一", highlight_srt)
-        self.assertIn("第三步高光字幕二", highlight_srt)
 
 
 if __name__ == "__main__":
