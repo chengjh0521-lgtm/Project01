@@ -233,6 +233,10 @@ def update_state_subtitles(state, corrected_srt):
     # VideoFileClip carries thread locks and cannot be deep-copied. Only subtitle
     # records are mutable here; video/audio handles intentionally keep identity.
     updated_state = dict(state)
+    updated_state["subtitle_text_overrides"] = {
+        f"{start_ms}-{end_ms}": text
+        for (start_ms, end_ms), text in texts_by_range.items()
+    }
     copied_sentence_lists = {}
 
     def update_sentences(key):
