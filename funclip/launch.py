@@ -921,7 +921,21 @@ if __name__ == "__main__":
             return g4f_openai_call("-".join(model.split('-')[1:]), system_content, user_content)
         return "Please choose a deepseek, qwen, gpt, moonshot, or g4f model to generate subtitle highlights."
 
-    def AI_clip(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, sound_effect_rules, selected_sfx, selected_sfx_terms):
+    def _llm_clip_range_message(timestamp_list):
+        def format_millis(value):
+            value = int(value)
+            hours, remainder = divmod(value, 3_600_000)
+            minutes, remainder = divmod(remainder, 60_000)
+            seconds, millis = divmod(remainder, 1_000)
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+        ranges = [
+            f"[{format_millis(start)}-{format_millis(end)}]"
+            for start, end in timestamp_list
+        ]
+        return "LLM highlight ranges used exactly: " + ", ".join(ranges)
+
+    def AI_clip(LLM_res, video_state, audio_state, output_dir, sound_effect_rules, selected_sfx, selected_sfx_terms):
         timestamp_list = extract_timestamps(LLM_res)
         sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
         if not timestamp_list:
@@ -934,17 +948,20 @@ if __name__ == "__main__":
             output_dir = os.path.abspath(output_dir)
         if video_state is not None:
             clip_video_file, message, clip_srt = audio_clipper.video_clip(
-                dest_text, start_ost, end_ost, video_state, 
-                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=False,
+                "", 0, 0, video_state,
+                dest_spk=None, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=False,
                 sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR)
+            message = _llm_clip_range_message(timestamp_list) + "\n" + message
+            logging.warning(message)
             return clip_video_file, None, message, clip_srt
         if audio_state is not None:
             (sr, res_audio), message, clip_srt = audio_clipper.clip(
-                dest_text, start_ost, end_ost, audio_state, 
-                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list)
+                "", 0, 0, audio_state,
+                dest_spk=None, output_dir=output_dir, timestamp_list=timestamp_list)
+            message = _llm_clip_range_message(timestamp_list) + "\n" + message
             return None, (sr, res_audio), message, clip_srt
     
-    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, subtitle_srt, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
+    def AI_clip_subti(LLM_res, video_state, audio_state, subtitle_srt, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
         timestamp_list = extract_timestamps(LLM_res)
         sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
         if not timestamp_list:
@@ -960,18 +977,21 @@ if __name__ == "__main__":
             audio_state, _ = update_state_subtitles(audio_state, subtitle_srt)
         if video_state is not None:
             clip_video_file, message, clip_srt = audio_clipper.video_clip(
-                dest_text, start_ost, end_ost, video_state, 
+                "", 0, 0, video_state,
                 font_size=font_size, font_color=font_color,
                 subtitle_x=subtitle_x, subtitle_y=subtitle_y,
                 highlight_terms=highlight_terms, highlight_color=highlight_color,
                 sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR,
-                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list,
+                dest_spk=None, output_dir=output_dir, timestamp_list=timestamp_list,
                 add_sub=True, subtitle_srt_text=subtitle_srt)
+            message = _llm_clip_range_message(timestamp_list) + "\n" + message
+            logging.warning(message)
             return clip_video_file, None, message, clip_srt
         if audio_state is not None:
             (sr, res_audio), message, clip_srt = audio_clipper.clip(
-                dest_text, start_ost, end_ost, audio_state, 
-                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list)
+                "", 0, 0, audio_state,
+                dest_spk=None, output_dir=output_dir, timestamp_list=timestamp_list)
+            message = _llm_clip_range_message(timestamp_list) + "\n" + message
             return None, (sr, res_audio), message, clip_srt
     
     # gradio interface
@@ -1275,10 +1295,6 @@ if __name__ == "__main__":
                          outputs=[highlight_terms])
         llm_clip_button.click(AI_clip, 
                            inputs=[llm_result,
-                                   video_text_input, 
-                                   video_spk_input, 
-                                   video_start_ost, 
-                                    video_end_ost,
                                     video_state,
                                     audio_state,
                                     output_dir,
@@ -1289,10 +1305,6 @@ if __name__ == "__main__":
                            outputs=[video_output, audio_output, clip_message, srt_clipped])
         llm_clip_subti_button.click(AI_clip_subti, 
                            inputs=[llm_result,
-                                   video_text_input, 
-                                   video_spk_input, 
-                                   video_start_ost, 
-                                    video_end_ost,
                                     video_state,
                                     audio_state,
                                     video_srt_output,
