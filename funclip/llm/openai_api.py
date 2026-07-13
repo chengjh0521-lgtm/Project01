@@ -1,31 +1,15 @@
-import os
+import json
 import logging
-from openai import OpenAI
+import os
+
+import requests
 
 
-if __name__ == '__main__':
-    from llm.demo_prompt import demo_prompt
-    client = OpenAI(
-        # This is the default and can be omitted
-        api_key=os.environ.get("OPENAI_API_KEY"),
-    )
-
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {
-                "role": "user",
-                "content": demo_prompt,
-            }
-        ],
-        model="gpt-3.5-turbo-0125",
-    )
-    print(chat_completion.choices[0].message.content)
-    
-    
-def openai_call(apikey, 
-                model="gpt-3.5-turbo", 
-                user_content="如何做西红柿炖牛腩？", 
-                system_content=None):
+def openai_call(
+        apikey,
+        model="gpt-3.5-turbo",
+        user_content="How do I make tomato beef stew?",
+        system_content=None):
     base_url = None
     if model.startswith("deepseek"):
         base_url = "https://api.deepseek.com"
@@ -34,31 +18,58 @@ def openai_call(apikey,
         base_url = "https://api.moonshot.cn/v1"
     else:
         apikey = apikey or os.environ.get("OPENAI_API_KEY")
+
     if not apikey:
         return "API key is required. Paste your DeepSeek API key or set DEEPSEEK_API_KEY."
-    client = OpenAI(
-        # This is the default and can be omitted
-        api_key=apikey,
-        base_url=base_url,
-        timeout=120.0,
-    )
+
+    apikey = str(apikey).strip()
+    try:
+        apikey.encode("ascii")
+    except UnicodeEncodeError:
+        return (
+            "LLM inference failed: API key contains non-ASCII characters. "
+            "Please paste only the raw DeepSeek key, without Chinese labels, quotes, or spaces."
+        )
+
     if system_content is not None and len(system_content.strip()):
         messages = [
-            {'role': 'system', 'content': system_content},
-            {'role': 'user', 'content': user_content}
-      ]
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content},
+        ]
     else:
-        messages = [
-            {'role': 'user', 'content': user_content}
-      ]
-    
+        messages = [{"role": "user", "content": user_content}]
+
     try:
-        chat_completion = client.chat.completions.create(
-            messages=messages,
-            model=model,
+        # Keep request headers ASCII-only. Chinese subtitle prompts are sent in
+        # an ASCII JSON body (with Unicode escapes), which OpenAI-compatible
+        # services decode as UTF-8 and avoids client/proxy ASCII failures.
+        endpoint = (base_url or "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
+        payload = json.dumps(
+            {"model": model, "messages": messages},
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+        response = requests.post(
+            endpoint,
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {apikey}",
+                "Content-Type": "application/json; charset=utf-8",
+                "Accept": "application/json",
+            },
+            timeout=(15, 120),
         )
+        response.raise_for_status()
+        response_data = response.json()
+        result = response_data["choices"][0]["message"]["content"]
         logging.info("OpenAI-compatible model inference done.")
-        return chat_completion.choices[0].message.content
+        return result
     except Exception as exc:
         logging.exception("OpenAI-compatible model inference failed.")
         return f"LLM inference failed: {exc}"
+
+
+if __name__ == "__main__":
+    from llm.demo_prompt import demo_prompt
+
+    print(openai_call(os.environ.get("OPENAI_API_KEY"), "gpt-3.5-turbo-0125", demo_prompt))
