@@ -1304,6 +1304,7 @@ if __name__ == "__main__":
         gr.Markdown(top_md_4)
         video_state, audio_state = gr.State(), gr.State()
         asr_task_timer = gr.Timer(value=10)
+        pipeline_task_timer = gr.Timer(value=10)
         with gr.Row():
             with gr.Column():
                 with gr.Row():
@@ -1344,6 +1345,15 @@ if __name__ == "__main__":
                             query_asr_button = gr.Button("Query ASR Task")
                         asr_job_id = gr.Textbox(label="ASR Job ID", interactive=True)
                         asr_task_status = gr.Textbox(label="后台识别任务状态 | ASR Background Task Status", interactive=False)
+                        one_click_button = gr.Button(
+                            "一键完成：ASR→修正→高光→重点词→剪辑烧录",
+                            variant="primary",
+                        )
+                        pipeline_job_id = gr.Textbox(label="One-click Job ID", interactive=True)
+                        pipeline_task_status = gr.Textbox(
+                            label="一键任务进度 | One-click Pipeline Status",
+                            interactive=False,
+                        )
                 video_text_output = gr.Textbox(label="✏️ 识别结果 | Recognition Result")
                 video_srt_output = gr.Textbox(label="📖 SRT字幕内容 | RST Subtitles")
                 with gr.Row():
@@ -1510,6 +1520,33 @@ if __name__ == "__main__":
                                     highlight_count, font_size, font_color, subtitle_x, subtitle_y, highlight_color,
                                     sound_effect_rules, local_sfx_list, selected_sfx_terms],
                             outputs=[save_settings_status])
+        one_click_outputs = [
+                            pipeline_task_status,
+                            video_text_output,
+                            video_srt_output,
+                            video_state,
+                            audio_state,
+                            corrected_srt_file,
+                            subtitle_correction_status,
+                            llm_result,
+                            highlight_terms,
+                            video_output,
+                            clip_message,
+                            srt_clipped,
+                            pipeline_job_id,
+                            ]
+        one_click_button.click(
+                            start_one_click_pipeline,
+                            inputs=[local_video_input, video_input, hotwords_input, output_dir,
+                                    subtitle_correction_prompt, prompt_head, prompt_head2,
+                                    llm_model, apikey_input, highlight_prompt, highlight_count,
+                                    font_size, font_color, subtitle_x, subtitle_y, highlight_color,
+                                    sound_effect_rules, local_sfx_list, selected_sfx_terms],
+                            outputs=one_click_outputs)
+        pipeline_task_timer.tick(
+                            query_one_click_pipeline,
+                            inputs=[pipeline_job_id],
+                            outputs=one_click_outputs)
         recog_button.click(start_asr_task,
                             inputs=[local_video_input,
                                     video_input, 
@@ -1577,10 +1614,12 @@ if __name__ == "__main__":
                                    ], 
                            outputs=[video_output, clip_message, srt_clipped])
         llm_button.click(llm_inference,
-                         inputs=[prompt_head, prompt_head2, video_srt_output, llm_model, apikey_input, video_input],
+                         inputs=[prompt_head, prompt_head2, video_srt_output, llm_model, apikey_input,
+                                 video_input, video_state, audio_state],
                          outputs=[llm_result])
         llm_highlight_button.click(llm_subtitle_highlights,
-                         inputs=[llm_result, video_srt_output, llm_model, apikey_input, highlight_prompt, highlight_count],
+                         inputs=[llm_result, video_srt_output, llm_model, apikey_input,
+                                 highlight_prompt, highlight_count, video_state, audio_state],
                          outputs=[highlight_terms])
         llm_clip_button.click(AI_clip, 
                            inputs=[llm_result, 
