@@ -1,3 +1,4 @@
+import logging
 import re
 
 
@@ -216,8 +217,29 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
     # DeepSeek's response becomes the new source of truth. Do not merge it back
     # into the ASR entries: omitted, changed, or newly-timed lines from the LLM
     # must not cause original ASR text to survive downstream.
+    chunks = _build_chunks(entries)
+    total_entries = len(entries)
+    total_chunks = len(chunks)
+    sent_entries = 0
+    received_entries = 0
+    logging.warning(
+        "字幕修正：共 %d 条字幕，计划分 %d 批调用 DeepSeek。",
+        total_entries,
+        total_chunks,
+    )
+
     llm_entries = []
-    for chunk in _build_chunks(entries):
+    for chunk_index, chunk in enumerate(chunks, start=1):
+        sent_entries += len(chunk)
+        logging.warning(
+            "字幕修正：第 %d/%d 批发送 %d 条；累计已发送 %d/%d 条，剩余未发送 %d 条。",
+            chunk_index,
+            total_chunks,
+            len(chunk),
+            sent_entries,
+            total_entries,
+            total_entries - sent_entries,
+        )
         source_lines = []
         for index, entry in enumerate(chunk, start=1):
             start_time, end_time = _entry_timestamp_range(entry)
@@ -228,7 +250,17 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
             + "\n".join(source_lines)
         )
         response = call_model(user_content, system_content)
-        for start_time, end_time, corrected_text in _parse_correction_lines(response):
+        corrections = _parse_correction_lines(response)
+        received_entries += len(corrections)
+        logging.warning(
+            "字幕修正：第 %d/%d 批收到 %d 条；累计已收到 %d 条，预计仍待返回 %d 条。",
+            chunk_index,
+            total_chunks,
+            len(corrections),
+            received_entries,
+            max(0, total_entries - received_entries),
+        )
+        for start_time, end_time, corrected_text in corrections:
             llm_entries.append(
                 {
                     "prefix": [str(len(llm_entries) + 1)],
