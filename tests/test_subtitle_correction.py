@@ -210,7 +210,7 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertNotIn("第一步错误字幕", str(burned_subtitles))
         self.assertIn("第二步 DeepSeek 修正字幕", clip_srt)
         self.assertNotIn("第一步错误字幕", clip_srt)
-        self.assertIn("explicit corrected SRT", message)
+        self.assertIn("explicit subtitle SRT", message)
 
     def test_video_burn_refuses_asr_fallback_without_explicit_srt(self):
         clipper = VideoClipper(None)
