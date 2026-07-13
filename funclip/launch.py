@@ -788,7 +788,7 @@ if __name__ == "__main__":
                     )
                 if asr_result is None or asr_result[2] is None:
                     raise ValueError("One-click processing requires a video input.")
-                _, original_srt, video_state_value, _, _, _ = asr_result
+                _, original_srt, video_state_value, _, asr_text_file, asr_srt_file = asr_result
 
                 _pipeline_step(job_id, 2, "Correcting ASR subtitles with DeepSeek.")
                 deepseek_model = model if str(model or "").startswith("deepseek") else DEFAULT_LLM_MODEL
@@ -821,6 +821,16 @@ if __name__ == "__main__":
                 )
                 with open(corrected_srt_path, "w", encoding="utf-8") as corrected_file:
                     corrected_file.write(corrected_srt)
+                for original_file in (asr_text_file, asr_srt_file):
+                    if original_file and os.path.isfile(original_file):
+                        try:
+                            os.remove(original_file)
+                        except OSError:
+                            logging.warning(
+                                "Could not remove discarded ASR artifact: %s",
+                                original_file,
+                            )
+                original_srt = None
 
                 _pipeline_step(
                     job_id, 3,
@@ -885,9 +895,9 @@ if __name__ == "__main__":
                     + clip_message_value
                 )
                 correction_status_value = (
-                    f"字幕修正完成：匹配 {matched_count}/{total_count} 条，"
-                    f"修改 {changed_count} 条，重建 {synced_count} 条。"
-                    f"统一字幕指纹：{fingerprint}。"
+                    f"字幕修正完成：DeepSeek 返回 {matched_count} 条；"
+                    f"ASR 输入为 {total_count} 条。重建 {synced_count} 条。"
+                    f"第一步文案已丢弃。统一字幕指纹：{fingerprint}。"
                 )
                 result = {
                     "corrected_text": corrected_text,
@@ -1154,9 +1164,9 @@ if __name__ == "__main__":
                 corrected_out.write(corrected_srt)
 
             status = (
-                f"字幕修正完成：匹配 {matched_count}/{total_count} 条，修改 {changed_count} 条。"
-                f"烧录字幕状态同步 {max(video_sync_count, audio_sync_count)} 条。"
-                f"已使用 {deepseek_model}，时间轴保持不变。后续 LLM 切片将自动使用修正版。"
+                f"字幕修正完成：DeepSeek 返回 {matched_count} 条；ASR 输入为 {total_count} 条。"
+                f"烧录字幕状态重建 {max(video_sync_count, audio_sync_count)} 条。"
+                f"第一步文案已丢弃。已使用 {deepseek_model}；后续步骤只使用本次返回。"
             )
             return (
                 corrected_srt,
