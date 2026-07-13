@@ -268,25 +268,46 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
         )
         expected_ranges = [_entry_timestamp_range(entry) for entry in chunk]
         corrected_by_range = {}
+        has_duplicate_range = False
         for start_time, end_time, corrected_text in corrections:
             key = (start_time, end_time)
             if key in corrected_by_range:
-                raise SubtitleCorrectionError(
-                    "DeepSeek returned a duplicate subtitle timestamp in batch "
-                    f"{chunk_index}/{total_chunks}."
-                )
+                has_duplicate_range = True
             corrected_by_range[key] = corrected_text
-        if set(corrected_by_range) != set(expected_ranges):
+        if len(corrections) != len(expected_ranges):
             raise SubtitleCorrectionError(
-                "DeepSeek changed, omitted, or added subtitle timestamps in batch "
-                f"{chunk_index}/{total_chunks}. The ASR audio timeline was kept."
+                "DeepSeek returned {} subtitle lines for {} ASR lines in batch {}/{}. "
+                "The original subtitles were kept because a complete corrected text "
+                "response is required.".format(
+                    len(corrections), len(expected_ranges), chunk_index, total_chunks
+                )
             )
-        for start_time, end_time in expected_ranges:
+
+        # Time fields from a text LLM are unreliable. If it returned one line
+        # per input cue but rewrote a timestamp, keep the response order and
+        # bind its text back to the immutable ASR audio timeline.
+        if has_duplicate_range or set(corrected_by_range) != set(expected_ranges):
+            logging.warning(
+                "Subtitle correction batch %d/%d rewrote timestamps; ignoring LLM "
+                "timestamps and binding %d corrected text lines to ASR cue order.",
+                chunk_index,
+                total_chunks,
+                len(corrections),
+            )
+            corrected_texts = [correction[2] for correction in corrections]
+        else:
+            corrected_texts = [
+                corrected_by_range[(start_time, end_time)]
+                for start_time, end_time in expected_ranges
+            ]
+
+        for (start_time, end_time), corrected_text in zip(
+                expected_ranges, corrected_texts):
             llm_entries.append(
                 {
                     "prefix": [str(len(llm_entries) + 1)],
                     "timestamp": f"{start_time} --> {end_time}",
-                    "text": corrected_by_range[(start_time, end_time)],
+                    "text": corrected_text,
                 }
             )
 
