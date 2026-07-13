@@ -901,7 +901,7 @@ if __name__ == "__main__":
                 correction_status_value = (
                     f"字幕修正完成：DeepSeek 返回 {matched_count} 条；"
                     f"ASR 输入为 {total_count} 条。重建 {synced_count} 条。"
-                    f"第一步文案已丢弃。统一字幕指纹：{fingerprint}。"
+                    f"第一步文案已丢弃，原始音频时间轴已保留。统一字幕指纹：{fingerprint}。"
                 )
                 result = {
                     "corrected_text": corrected_text,
@@ -1181,7 +1181,7 @@ if __name__ == "__main__":
                 correction_status_value = (
                     f"字幕修正完成：DeepSeek 返回 {matched_count} 条；"
                     f"ASR 输入为 {total_count} 条。重建 {synced_count} 条。"
-                    f"第一步文案已丢弃。统一字幕指纹：{fingerprint}。"
+                    f"第一步文案已丢弃，原始音频时间轴已保留。统一字幕指纹：{fingerprint}。"
                 )
                 result = {
                     "corrected_text": corrected_text,
@@ -1470,7 +1470,8 @@ if __name__ == "__main__":
             status = (
                 f"字幕修正完成：DeepSeek 返回 {matched_count} 条；ASR 输入为 {total_count} 条。"
                 f"烧录字幕状态重建 {max(video_sync_count, audio_sync_count)} 条。"
-                f"第一步文案已丢弃。已使用 {deepseek_model}；后续步骤只使用本次返回。"
+                f"第一步文案已丢弃，原始音频时间轴已保留。"
+                f"已使用 {deepseek_model}；后续步骤使用本次修正文案和原始时间轴。"
             )
             return (
                 corrected_srt,
