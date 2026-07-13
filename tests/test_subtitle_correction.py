@@ -13,6 +13,7 @@ from llm.subtitle_correction import (
     parse_srt_entries,
     update_state_subtitles,
 )
+from utils.subtitle_utils import generate_srt
 
 
 SRT = """1
@@ -22,6 +23,14 @@ SRT = """1
 2  spk0
 00:00:03,200 --> 00:00:05,000
 需要检察糖化血红蛋白
+"""
+
+CONTINUOUS_SPEAKER_SRT = """1  spk0
+00:00:00,150 --> 00:00:04,490
+第一句
+2  spk1
+00:00:04,490 --> 00:00:07,170
+第二句
 """
 
 
@@ -54,6 +63,25 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertEqual(total, 2)
         self.assertEqual(matched, 1)
         self.assertIn("这个病人血糖有点高", corrected)
+
+    def test_parses_speaker_srt_without_blank_lines_between_cues(self):
+        entries = parse_srt_entries(CONTINUOUS_SPEAKER_SRT)
+
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0]["prefix"], ["1  spk0"])
+        self.assertEqual(entries[0]["text"], "第一句")
+        self.assertEqual(entries[1]["prefix"], ["2  spk1"])
+        self.assertEqual(entries[1]["text"], "第二句")
+
+    def test_speaker_srt_output_has_standard_blank_cue_separator(self):
+        srt = generate_srt(
+            [
+                {"text": ["第", "一", "句"], "timestamp": [[0, 500], [500, 1000], [1000, 1500]], "spk": 0},
+                {"text": ["第", "二", "句"], "timestamp": [[1500, 2000], [2000, 2500], [2500, 3000]], "spk": 1},
+            ]
+        )
+
+        self.assertIn("第一句\n\n2  spk1", srt)
 
     def test_updates_rendering_state_without_changing_timestamps(self):
         video_handle = threading.Lock()
