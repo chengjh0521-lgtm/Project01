@@ -795,7 +795,8 @@ if __name__ == "__main__":
             subtitle_x=subtitle_x, subtitle_y=subtitle_y,
             highlight_terms=highlight_terms, highlight_color=highlight_color,
             sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR,
-            add_sub=True, dest_spk=video_spk_input, output_dir=output_dir
+            add_sub=True, dest_spk=video_spk_input, output_dir=output_dir,
+            subtitle_srt_text=subtitle_srt
             )
         
     def llm_inference(system_content, user_content, srt_text, model, apikey, video_input=None):
@@ -961,7 +962,8 @@ if __name__ == "__main__":
                 subtitle_x=subtitle_x, subtitle_y=subtitle_y,
                 highlight_terms=highlight_terms, highlight_color=highlight_color,
                 sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR,
-                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=True)
+                dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list,
+                add_sub=True, subtitle_srt_text=subtitle_srt)
             return clip_video_file, None, message, clip_srt
         if audio_state is not None:
             (sr, res_audio), message, clip_srt = audio_clipper.clip(
