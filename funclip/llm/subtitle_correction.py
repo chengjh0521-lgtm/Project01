@@ -221,9 +221,8 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
         "除上述内容外，不输出任何解释、分析、总结或额外文字。"
     )
 
-    # DeepSeek's response becomes the new source of truth. Do not merge it back
-    # into the ASR entries: omitted, changed, or newly-timed lines from the LLM
-    # must not cause original ASR text to survive downstream.
+    # DeepSeek owns every corrected text. ASR owns only the audio timestamps,
+    # because a text-only LLM cannot safely create a video time axis.
     chunks = _build_chunks(entries)
     total_entries = len(entries)
     total_chunks = len(chunks)
@@ -267,12 +266,27 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
             received_entries,
             max(0, total_entries - received_entries),
         )
+        expected_ranges = [_entry_timestamp_range(entry) for entry in chunk]
+        corrected_by_range = {}
         for start_time, end_time, corrected_text in corrections:
+            key = (start_time, end_time)
+            if key in corrected_by_range:
+                raise SubtitleCorrectionError(
+                    "DeepSeek returned a duplicate subtitle timestamp in batch "
+                    f"{chunk_index}/{total_chunks}."
+                )
+            corrected_by_range[key] = corrected_text
+        if set(corrected_by_range) != set(expected_ranges):
+            raise SubtitleCorrectionError(
+                "DeepSeek changed, omitted, or added subtitle timestamps in batch "
+                f"{chunk_index}/{total_chunks}. The ASR audio timeline was kept."
+            )
+        for start_time, end_time in expected_ranges:
             llm_entries.append(
                 {
                     "prefix": [str(len(llm_entries) + 1)],
                     "timestamp": f"{start_time} --> {end_time}",
-                    "text": corrected_text,
+                    "text": corrected_by_range[(start_time, end_time)],
                 }
             )
 
@@ -282,9 +296,8 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
         )
 
     changed_count = sum(
-        1
-        for index, entry in enumerate(llm_entries)
-        if index >= len(entries) or entry["text"] != entries[index]["text"]
+        corrected_entry["text"] != original_entry["text"]
+        for original_entry, corrected_entry in zip(entries, llm_entries)
     )
     returned_count = len(llm_entries)
     return (
