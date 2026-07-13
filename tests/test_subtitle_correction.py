@@ -14,6 +14,7 @@ from llm.subtitle_correction import (
     update_state_subtitles,
 )
 from utils.subtitle_utils import generate_srt
+from utils.subtitle_utils import generate_srt_clip
 
 
 SRT = """1
@@ -83,6 +84,21 @@ class TestSubtitleCorrection(unittest.TestCase):
 
         self.assertIn("第一句\n\n2  spk1", srt)
 
+    def test_clip_subtitles_use_timestamp_matched_correction_override(self):
+        sentences = [
+            {"text": ["原", "始", "文", "案"], "timestamp": [[1000, 1500], [1500, 2000], [2000, 2500], [2500, 3000]]},
+        ]
+
+        srt, subs, _ = generate_srt_clip(
+            sentences,
+            1.0,
+            3.0,
+            subtitle_overrides={"1000-3000": "DeepSeek 修正文案"},
+        )
+
+        self.assertIn("DeepSeek 修正文案", srt)
+        self.assertEqual(subs[0][1], "DeepSeek 修正文案")
+
     def test_updates_rendering_state_without_changing_timestamps(self):
         video_handle = threading.Lock()
         state = {
@@ -101,6 +117,10 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertEqual(synced, 2)
         self.assertEqual(updated["sentences"][1]["text"], "需要检查糖化血红蛋白")
         self.assertEqual(updated["sentences"][1]["timestamp"], [[3200, 5000]])
+        self.assertEqual(
+            updated["subtitle_text_overrides"]["3200-5000"],
+            "需要检查糖化血红蛋白",
+        )
         self.assertIs(updated["video"], video_handle)
         self.assertEqual(state["sentences"][1]["text"], "旧字幕二")
 
