@@ -78,14 +78,26 @@ def generate_srt(sentence_list):
             srt_total += "{}\n{}\n".format(i + 1, t2s.srt())
     return srt_total
 
-def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0):
+def _subtitle_override_text(sentence, subtitle_overrides):
+    if not subtitle_overrides:
+        return None
+    try:
+        start_ms = int(sentence['timestamp'][0][0])
+        end_ms = int(sentence['timestamp'][-1][1])
+    except (IndexError, KeyError, TypeError, ValueError):
+        return None
+    return subtitle_overrides.get(f"{start_ms}-{end_ms}")
+
+
+def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0, subtitle_overrides=None):
     start, end = int(start * 1000), int(end * 1000)
     srt_total = ''
     cc = 1 + begin_index
     subs = []
     for _, sent in enumerate(sentence_list):
-        if isinstance(sent['text'], str):
-            sent['text'] = str2list(sent['text'])
+        sentence_text = sent['text']
+        sentence_tokens = str2list(sentence_text) if isinstance(sentence_text, str) else sentence_text
+        override_text = _subtitle_override_text(sent, subtitle_overrides)
         if sent['timestamp'][-1][1] <= start:
             # print("CASE0")
             continue
@@ -95,7 +107,7 @@ def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0
         # parts in between
         if (sent['timestamp'][-1][1] <= end and sent['timestamp'][0][0] > start) or (sent['timestamp'][-1][1] == end and sent['timestamp'][0][0] == start):
             # print("CASE1"); import pdb; pdb.set_trace()
-            t2s = Text2SRT(sent['text'], sent['timestamp'], offset=start)
+            t2s = Text2SRT(override_text or sentence_text, sent['timestamp'], offset=start)
             srt_total += "{}\n{}".format(cc, t2s.srt(time_acc_ost))
             subs.append((t2s.time(time_acc_ost), t2s.text(), t2s.token_times(time_acc_ost)))
             cc += 1
@@ -106,7 +118,7 @@ def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0
                 for j, ts in enumerate(sent['timestamp']):
                     if ts[1] > start:
                         break
-                _text = sent['text'][j:]
+                _text = override_text if j == 0 and override_text else sentence_tokens[j:]
                 _ts = sent['timestamp'][j:]
             else:
                 for j, ts in enumerate(sent['timestamp']):
@@ -118,7 +130,7 @@ def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0
                         _end = j
                         break
                 # _text = " ".join(sent['text'][_start:_end])
-                _text = sent['text'][_start:_end]
+                _text = sentence_tokens[_start:_end]
                 _ts = sent['timestamp'][_start:_end]
             if len(ts):
                 t2s = Text2SRT(_text, _ts, offset=start)
@@ -131,7 +143,7 @@ def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0
             for j, ts in enumerate(sent['timestamp']):
                 if ts[1] > end:
                     break
-            _text = sent['text'][:j]
+            _text = sentence_tokens[:j]
             _ts = sent['timestamp'][:j]
             if len(_ts):
                 t2s = Text2SRT(_text, _ts, offset=start)
