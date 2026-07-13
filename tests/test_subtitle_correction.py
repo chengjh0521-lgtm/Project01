@@ -51,12 +51,12 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertEqual(changed, 1)
         self.assertEqual(total, 2)
         self.assertEqual(matched, 2)
-        self.assertIn("2  spk0", corrected)
+        self.assertNotIn("spk0", corrected)
         self.assertIn("00:00:03,200 --> 00:00:05,000", corrected)
         self.assertIn("需要检查糖化血红蛋白", corrected)
         self.assertNotIn("需要检察糖化血红蛋白", corrected)
 
-    def test_keeps_unmatched_subtitles_unchanged(self):
+    def test_discards_asr_lines_omitted_by_deepseek(self):
         response = "1. [00:00:03,200-00:00:05,000] 需要检查糖化血红蛋白"
         corrected, changed, total, matched = correct_srt_with_llm(
             SRT, "校对", lambda *_args: response
@@ -64,7 +64,23 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertEqual(changed, 1)
         self.assertEqual(total, 2)
         self.assertEqual(matched, 1)
-        self.assertIn("这个病人血糖有点高", corrected)
+        self.assertNotIn("这个病人血糖有点高", corrected)
+        self.assertNotIn("需要检察糖化血红蛋白", corrected)
+        self.assertIn("需要检查糖化血红蛋白", corrected)
+
+    def test_accepts_deepseek_timestamps_without_matching_asr(self):
+        response = "1. [00:00:10,000-00:00:12,500] DeepSeek 全新结果"
+
+        corrected, changed, total, returned = correct_srt_with_llm(
+            SRT, "校对", lambda *_args: response
+        )
+
+        self.assertEqual(total, 2)
+        self.assertEqual(returned, 1)
+        self.assertEqual(changed, 1)
+        self.assertIn("00:00:10,000 --> 00:00:12,500", corrected)
+        self.assertIn("DeepSeek 全新结果", corrected)
+        self.assertNotIn("这个病人血糖有点高", corrected)
 
     def test_parses_speaker_srt_without_blank_lines_between_cues(self):
         entries = parse_srt_entries(CONTINUOUS_SPEAKER_SRT)

@@ -213,11 +213,10 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
         "除上述内容外，不输出任何解释、分析、总结或额外文字。"
     )
 
-    corrected_by_range = {}
-    for entry in entries:
-        corrected_by_range.setdefault(_entry_timestamp_range(entry), []).append(entry)
-
-    matched_count = 0
+    # DeepSeek's response becomes the new source of truth. Do not merge it back
+    # into the ASR entries: omitted, changed, or newly-timed lines from the LLM
+    # must not cause original ASR text to survive downstream.
+    llm_entries = []
     for chunk in _build_chunks(entries):
         source_lines = []
         for index, entry in enumerate(chunk, start=1):
@@ -230,25 +229,31 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
         )
         response = call_model(user_content, system_content)
         for start_time, end_time, corrected_text in _parse_correction_lines(response):
-            matching_entries = corrected_by_range.get((start_time, end_time))
-            if not matching_entries:
-                continue
-            entry = matching_entries.pop(0)
-            entry["corrected_text"] = corrected_text
-            matched_count += 1
+            llm_entries.append(
+                {
+                    "prefix": [str(len(llm_entries) + 1)],
+                    "timestamp": f"{start_time} --> {end_time}",
+                    "text": corrected_text,
+                }
+            )
 
-    if not matched_count:
+    if not llm_entries:
         raise SubtitleCorrectionError(
-            "No DeepSeek subtitle timestamps matched the original SRT."
+            "DeepSeek returned no usable corrected subtitle lines."
         )
 
-    changed_count = 0
-    for entry in entries:
-        corrected_text = entry.pop("corrected_text", entry["text"])
-        if corrected_text != entry["text"]:
-            changed_count += 1
-        entry["text"] = corrected_text
-    return render_srt_entries(entries), changed_count, len(entries), matched_count
+    changed_count = sum(
+        1
+        for index, entry in enumerate(llm_entries)
+        if index >= len(entries) or entry["text"] != entries[index]["text"]
+    )
+    returned_count = len(llm_entries)
+    return (
+        render_srt_entries(llm_entries),
+        changed_count,
+        len(entries),
+        returned_count,
+    )
 
 
 def update_state_subtitles(state, corrected_srt):
