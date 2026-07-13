@@ -29,6 +29,7 @@ from llm.subtitle_correction import (
     DEFAULT_SUBTITLE_CORRECTION_PROMPT,
     SubtitleCorrectionError,
     correct_srt_with_llm,
+    render_llm_highlight_srt,
     transcript_from_srt,
     update_state_subtitles,
 )
@@ -847,11 +848,13 @@ if __name__ == "__main__":
                 if str(llm_result_value or "").lower().startswith((
                         "llm inference failed:", "api key is required")):
                     raise RuntimeError(llm_result_value)
-                timestamp_list = extract_timestamps(llm_result_value)
-                if not timestamp_list:
-                    raise RuntimeError(
-                        "Step 3 returned no valid highlight timestamp ranges."
+                try:
+                    highlight_srt, timestamp_list = render_llm_highlight_srt(
+                        llm_result_value
                     )
+                except SubtitleCorrectionError as exc:
+                    raise RuntimeError(f"Step 3 returned invalid highlight subtitles: {exc}")
+                highlight_fingerprint = _subtitle_fingerprint(highlight_srt)
 
                 _pipeline_step(
                     job_id, 4,
@@ -868,7 +871,7 @@ if __name__ == "__main__":
 
                 _pipeline_step(
                     job_id, 5,
-                    f"Clipping LLM highlights and burning corrected SRT {fingerprint}.",
+                    f"Clipping LLM highlights and burning step-3 highlight SRT {highlight_fingerprint}.",
                 )
                 if _subtitle_fingerprint(_canonical_srt(video_state=video_state_value)) != fingerprint:
                     raise RuntimeError("Subtitle source changed before final rendering.")
@@ -889,11 +892,12 @@ if __name__ == "__main__":
                     output_dir=pipeline_dir,
                     timestamp_list=timestamp_list,
                     add_sub=True,
-                    subtitle_srt_text=canonical_srt,
+                    subtitle_srt_text=highlight_srt,
                 )
                 clip_message_value = (
                     _llm_clip_range_message(timestamp_list)
                     + f"\nCanonical corrected SRT: {fingerprint}"
+                    + f"\nStep-3 highlight SRT: {highlight_fingerprint}"
                     + "\n"
                     + clip_message_value
                 )
@@ -1127,11 +1131,13 @@ if __name__ == "__main__":
                 if str(llm_result_value or "").lower().startswith((
                         "llm inference failed:", "api key is required")):
                     raise RuntimeError(llm_result_value)
-                timestamp_list = extract_timestamps(llm_result_value)
-                if not timestamp_list:
-                    raise RuntimeError(
-                        "Step 3 returned no valid highlight timestamp ranges."
+                try:
+                    highlight_srt, timestamp_list = render_llm_highlight_srt(
+                        llm_result_value
                     )
+                except SubtitleCorrectionError as exc:
+                    raise RuntimeError(f"Step 3 returned invalid highlight subtitles: {exc}")
+                highlight_fingerprint = _subtitle_fingerprint(highlight_srt)
 
                 _pipeline_step(
                     job_id, 4,
@@ -1148,7 +1154,7 @@ if __name__ == "__main__":
 
                 _pipeline_step(
                     job_id, 5,
-                    f"Clipping LLM highlights and burning corrected SRT {fingerprint}.",
+                    f"Clipping LLM highlights and burning step-3 highlight SRT {highlight_fingerprint}.",
                 )
                 if _subtitle_fingerprint(_canonical_srt(video_state=video_state_value)) != fingerprint:
                     raise RuntimeError("Subtitle source changed before final rendering.")
@@ -1169,11 +1175,12 @@ if __name__ == "__main__":
                     output_dir=pipeline_dir,
                     timestamp_list=timestamp_list,
                     add_sub=True,
-                    subtitle_srt_text=canonical_srt,
+                    subtitle_srt_text=highlight_srt,
                 )
                 clip_message_value = (
                     _llm_clip_range_message(timestamp_list)
                     + f"\nCanonical corrected SRT: {fingerprint}"
+                    + f"\nStep-3 highlight SRT: {highlight_fingerprint}"
                     + "\n"
                     + clip_message_value
                 )
@@ -1572,26 +1579,26 @@ if __name__ == "__main__":
             return None, (sr, res_audio), message, clip_srt
     
     def AI_clip_subti(LLM_res, video_state, audio_state, subtitle_srt, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
-        timestamp_list = extract_timestamps(LLM_res)
+        try:
+            highlight_srt, timestamp_list = render_llm_highlight_srt(LLM_res)
+        except SubtitleCorrectionError as exc:
+            return None, None, f"Step 3 highlight subtitles are invalid: {exc}", ""
         sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
-        if not timestamp_list:
-            message = "No timestamps found in LLM result. Please make sure the LLM output contains ranges like [00:01:20-00:02:20]."
-            return None, None, message, ""
         output_dir = output_dir.strip()
         if not len(output_dir):
             output_dir = None
         else:
             output_dir = os.path.abspath(output_dir)
-        subtitle_srt = _deepseek_corrected_srt(video_state, audio_state)
-        if not subtitle_srt:
+        corrected_srt = _deepseek_corrected_srt(video_state, audio_state)
+        if not corrected_srt:
             return None, None, "DeepSeek subtitle correction must complete before caption rendering.", ""
-        subtitle_fingerprint = _subtitle_fingerprint(subtitle_srt)
+        subtitle_fingerprint = _subtitle_fingerprint(highlight_srt)
         logging.warning(
-            "Final clip rendering uses canonical SRT %s exclusively.",
+            "Final clip rendering uses step-3 highlight SRT %s exclusively.",
             subtitle_fingerprint,
         )
-        video_state, _ = update_state_subtitles(video_state, subtitle_srt)
-        audio_state, _ = update_state_subtitles(audio_state, subtitle_srt)
+        video_state, _ = update_state_subtitles(video_state, highlight_srt)
+        audio_state, _ = update_state_subtitles(audio_state, highlight_srt)
         if video_state is not None:
             clip_video_file, message, clip_srt = audio_clipper.video_clip(
                 "", 0, 0, video_state,
@@ -1600,8 +1607,13 @@ if __name__ == "__main__":
                 highlight_terms=highlight_terms, highlight_color=highlight_color,
                 sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR,
                 dest_spk=None, output_dir=output_dir, timestamp_list=timestamp_list,
-                add_sub=True, subtitle_srt_text=subtitle_srt)
-            message = _llm_clip_range_message(timestamp_list) + "\n" + message
+                add_sub=True, subtitle_srt_text=highlight_srt)
+            message = (
+                _llm_clip_range_message(timestamp_list)
+                + f"\nStep-3 highlight subtitle SRT: {subtitle_fingerprint}"
+                + "\n"
+                + message
+            )
             logging.warning(message)
             return clip_video_file, None, message, clip_srt
         if audio_state is not None:
