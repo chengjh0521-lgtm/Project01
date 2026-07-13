@@ -41,8 +41,8 @@ CONTINUOUS_SPEAKER_SRT = """1  spk0
 class TestSubtitleCorrection(unittest.TestCase):
     def test_corrects_text_and_preserves_timeline_and_prefix(self):
         def fake_call(user_content, _system_content):
-            self.assertIn("[00:00:01,000-00:00:03,000]", user_content)
-            self.assertIn("[00:00:03,200-00:00:05,000]", user_content)
+            self.assertIn("1. 这个病人血糖有点高", user_content)
+            self.assertIn("2. 需要检察糖化血红蛋白", user_content)
             return (
                 "1. [00:00:01,000-00:00:03,000] 这个病人血糖有点高\n"
                 "2. [00:00:03,200-00:00:05,000] 需要检查糖化血红蛋白"
@@ -83,9 +83,9 @@ class TestSubtitleCorrection(unittest.TestCase):
 
         self.assertEqual((changed, total, returned), (2, 2, 2))
         self.assertEqual(entries[0]["timestamp"], "00:00:01,000 --> 00:00:03,000")
-        self.assertEqual(entries[0]["text"], "修正后的第一句")
+        self.assertEqual(entries[0]["text"], "修正后的第二句")
         self.assertEqual(entries[1]["timestamp"], "00:00:03,200 --> 00:00:05,000")
-        self.assertEqual(entries[1]["text"], "修正后的第二句")
+        self.assertEqual(entries[1]["text"], "修正后的第一句")
 
     def test_parses_speaker_srt_without_blank_lines_between_cues(self):
         entries = parse_srt_entries(CONTINUOUS_SPEAKER_SRT)
@@ -288,7 +288,7 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertEqual(len(updated["sentences"]), 2)
         self.assertNotIn("内部额外句子", str(updated))
 
-    def test_rebinds_complete_llm_text_to_asr_order_when_timestamps_change(self):
+    def test_rebinds_text_only_llm_response_to_asr_order(self):
         source_srt = """1
 00:00:01,000 --> 00:00:03,000
 first original cue
@@ -297,10 +297,7 @@ first original cue
 00:00:03,000 --> 00:00:05,000
 second original cue
 """
-        response = (
-            "1. [00:10:01,000-00:10:03,000] first corrected cue\n"
-            "2. [00:10:03,000-00:10:05,000] second corrected cue"
-        )
+        response = "1. first corrected cue\n2. second corrected cue"
 
         corrected, changed, total, returned = correct_srt_with_llm(
             source_srt, "proofread", lambda *_args: response
