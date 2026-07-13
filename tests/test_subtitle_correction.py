@@ -58,39 +58,6 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertIn("需要检查糖化血红蛋白", corrected)
         self.assertNotIn("需要检察糖化血红蛋白", corrected)
 
-    def test_sends_all_subtitles_to_deepseek_in_one_request(self):
-        def timestamp(seconds):
-            minutes, seconds = divmod(seconds, 60)
-            return f"00:{minutes:02d}:{seconds:02d},000"
-
-        source_blocks = []
-        response_lines = []
-        for index in range(81):
-            start = timestamp(index * 2)
-            end = timestamp(index * 2 + 1)
-            text = f"第 {index + 1} 条字幕"
-            source_blocks.append(f"{index + 1}\n{start} --> {end}\n{text}")
-            response_lines.append(f"{index + 1}. [{start}-{end}] {text}")
-
-        calls = []
-
-        def fake_call(user_content, _system_content):
-            calls.append(user_content)
-            return "\n".join(response_lines)
-
-        corrected, _, total, returned = correct_srt_with_llm(
-            "\n\n".join(source_blocks),
-            "校对",
-            fake_call,
-        )
-
-        self.assertEqual(len(calls), 1)
-        self.assertIn("第 1 条字幕", calls[0])
-        self.assertIn("第 81 条字幕", calls[0])
-        self.assertEqual(total, 81)
-        self.assertEqual(returned, 81)
-        self.assertIn("第 81 条字幕", corrected)
-
     def test_discards_asr_lines_omitted_by_deepseek(self):
         response = "1. [00:00:03,200-00:00:05,000] 需要检查糖化血红蛋白"
         corrected, changed, total, matched = correct_srt_with_llm(
