@@ -601,6 +601,7 @@ class VideoClipper():
         recog_res_raw = state['recog_res_raw']
         timestamp = state['timestamp']
         sentences = state['sentences']
+        subtitle_overrides = state.get('subtitle_text_overrides')
         sr, data = audio_input
         data = data.astype(np.float64)
 
@@ -643,7 +644,7 @@ class VideoClipper():
             end = min(max(0, end+end_ost*16), len(data))
             res_audio = data[start:end]
             start_end_info = "from {} to {}".format(start/16000, end/16000)
-            srt_clip, _, srt_index = generate_srt_clip(sentences, start/16000.0, end/16000.0, begin_index=srt_index)
+            srt_clip, _, srt_index = generate_srt_clip(sentences, start/16000.0, end/16000.0, begin_index=srt_index, subtitle_overrides=subtitle_overrides)
             clip_srt += srt_clip
             for _ts in ts[1:]:  # multiple sentence input or multiple output matched
                 start, end = _ts
@@ -651,7 +652,7 @@ class VideoClipper():
                 end = min(max(0, end+end_ost*16), len(data))
                 start_end_info += ", from {} to {}".format(start, end)
                 res_audio = np.concatenate([res_audio, data[start:end]], -1)
-                srt_clip, _, srt_index = generate_srt_clip(sentences, start/16000.0, end/16000.0, begin_index=srt_index-1)
+                srt_clip, _, srt_index = generate_srt_clip(sentences, start/16000.0, end/16000.0, begin_index=srt_index-1, subtitle_overrides=subtitle_overrides)
                 clip_srt += srt_clip
         if len(ts):
             message = "{} periods found in the speech: ".format(len(ts)) + start_end_info + log_append
@@ -713,6 +714,7 @@ class VideoClipper():
         recog_res_raw = state['recog_res_raw']
         timestamp = state['timestamp']
         sentences = state['sentences']
+        subtitle_overrides = state.get('subtitle_text_overrides')
         video = state['video']
         clip_video_file = state['clip_video_file']
         video_filename = state['video_filename']
@@ -757,7 +759,7 @@ class VideoClipper():
             if self.lang == 'en' and isinstance(sentences, str):
                 sentences = sentences.split()
             start, end = ts[0][0] / 16000, ts[0][1] / 16000
-            srt_clip, subs, srt_index = generate_srt_clip(sentences, start, end, begin_index=srt_index, time_acc_ost=time_acc_ost)
+            srt_clip, subs, srt_index = generate_srt_clip(sentences, start, end, begin_index=srt_index, time_acc_ost=time_acc_ost, subtitle_overrides=subtitle_overrides)
             sound_effect_subs.extend(subs)
             start, end = start+start_ost/1000.0, end+end_ost/1000.0
             video_clip = video.subclip(start, end)
@@ -769,7 +771,7 @@ class VideoClipper():
             time_acc_ost += end - start
             for _ts in ts[1:]:
                 start, end = _ts[0] / 16000, _ts[1] / 16000
-                srt_clip, subs, srt_index = generate_srt_clip(sentences, start, end, begin_index=srt_index-1, time_acc_ost=time_acc_ost)
+                srt_clip, subs, srt_index = generate_srt_clip(sentences, start, end, begin_index=srt_index-1, time_acc_ost=time_acc_ost, subtitle_overrides=subtitle_overrides)
                 if not len(subs):
                     continue
                 sound_effect_subs.extend(subs)
