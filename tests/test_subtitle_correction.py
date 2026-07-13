@@ -61,13 +61,13 @@ class TestSubtitleCorrection(unittest.TestCase):
     def test_rejects_deepseek_response_that_omits_an_asr_timestamp(self):
         response = "1. [00:00:03,200-00:00:05,000] 需要检查糖化血红蛋白"
 
-        with self.assertRaisesRegex(SubtitleCorrectionError, "omitted"):
+        with self.assertRaisesRegex(SubtitleCorrectionError, "returned 1 subtitle lines"):
             correct_srt_with_llm(SRT, "校对", lambda *_args: response)
 
     def test_rejects_deepseek_timestamps_that_do_not_match_audio(self):
         response = "1. [00:00:10,000-00:00:12,500] DeepSeek 全新结果"
 
-        with self.assertRaisesRegex(SubtitleCorrectionError, "timestamps"):
+        with self.assertRaisesRegex(SubtitleCorrectionError, "returned 1 subtitle lines"):
             correct_srt_with_llm(SRT, "校对", lambda *_args: response)
 
     def test_binds_corrected_text_to_original_audio_timestamps(self):
@@ -287,6 +287,31 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertEqual(updated["sentences"][1]["text"], "需要检查糖化血红蛋白")
         self.assertEqual(len(updated["sentences"]), 2)
         self.assertNotIn("内部额外句子", str(updated))
+
+    def test_rebinds_complete_llm_text_to_asr_order_when_timestamps_change(self):
+        source_srt = """1
+00:00:01,000 --> 00:00:03,000
+first original cue
+
+2
+00:00:03,000 --> 00:00:05,000
+second original cue
+"""
+        response = (
+            "1. [00:10:01,000-00:10:03,000] first corrected cue\n"
+            "2. [00:10:03,000-00:10:05,000] second corrected cue"
+        )
+
+        corrected, changed, total, returned = correct_srt_with_llm(
+            source_srt, "proofread", lambda *_args: response
+        )
+        entries = parse_srt_entries(corrected)
+
+        self.assertEqual((changed, total, returned), (2, 2, 2))
+        self.assertEqual(entries[0]["timestamp"], "00:00:01,000 --> 00:00:03,000")
+        self.assertEqual(entries[0]["text"], "first corrected cue")
+        self.assertEqual(entries[1]["timestamp"], "00:00:03,000 --> 00:00:05,000")
+        self.assertEqual(entries[1]["text"], "second corrected cue")
 
     def test_parse_rejects_non_srt_text(self):
         with self.assertRaises(SubtitleCorrectionError):
