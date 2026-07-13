@@ -116,6 +116,36 @@ def _sentence_timestamp_millis_range(sentence):
         return None
 
 
+def _subtitle_tokens(text):
+    tokens = re.findall(r"[\u4e00-\u9fff]|[\w-]+", str(text or ""), re.UNICODE)
+    return tokens or [str(text or "").strip()]
+
+
+def _interpolate_token_timestamps(start_ms, end_ms, token_count):
+    token_count = max(1, int(token_count))
+    duration = max(token_count, int(end_ms) - int(start_ms))
+    timestamps = []
+    for index in range(token_count):
+        token_start = int(start_ms) + round(duration * index / token_count)
+        token_end = int(start_ms) + round(duration * (index + 1) / token_count)
+        timestamps.append([token_start, max(token_start + 1, token_end)])
+    timestamps[-1][1] = max(timestamps[-1][0] + 1, int(end_ms))
+    return timestamps
+
+
+def _speaker_from_entry(entry):
+    for line in entry.get("prefix") or []:
+        match = re.search(r"\bspk([^\s]+)", str(line), re.IGNORECASE)
+        if match:
+            speaker = match.group(1)
+            return int(speaker) if speaker.isdigit() else speaker
+    return None
+
+
+def transcript_from_srt(srt_text):
+    return "\n".join(entry["text"] for entry in parse_srt_entries(srt_text))
+
+
 def _parse_correction_lines(response_text):
     text = str(response_text or "").strip()
     if not text:
@@ -226,40 +256,45 @@ def update_state_subtitles(state, corrected_srt):
         return None, 0
 
     entries = parse_srt_entries(corrected_srt)
-    texts_by_range = {
-        _entry_timestamp_millis_range(entry): entry["text"]
-        for entry in entries
-    }
-    # VideoFileClip carries thread locks and cannot be deep-copied. Only subtitle
-    # records are mutable here; video/audio handles intentionally keep identity.
+    # VideoFileClip carries thread locks and cannot be deep-copied. Keep media
+    # handles by identity, but replace every text-bearing ASR field from the
+    # corrected SRT so no downstream path can read the original transcript.
     updated_state = dict(state)
-    updated_state["subtitle_text_overrides"] = {
-        f"{start_ms}-{end_ms}": text
-        for (start_ms, end_ms), text in texts_by_range.items()
-    }
-    copied_sentence_lists = {}
+    sentences = []
+    raw_tokens = []
+    raw_timestamps = []
+    subtitle_overrides = {}
+    has_speaker_labels = False
 
-    def update_sentences(key):
-        original_sentences = state.get(key)
-        sentences = updated_state.get(key)
-        if not isinstance(sentences, list):
-            return 0
-        list_key = id(original_sentences)
-        if list_key not in copied_sentence_lists:
-            copied_sentence_lists[list_key] = [
-                dict(sentence) if isinstance(sentence, dict) else sentence
-                for sentence in original_sentences
-            ]
-        updated_state[key] = copied_sentence_lists[list_key]
-        synced = 0
-        for sentence in updated_state[key]:
-            timestamp_range = _sentence_timestamp_millis_range(sentence)
-            corrected_text = texts_by_range.get(timestamp_range)
-            if corrected_text is not None:
-                sentence["text"] = corrected_text
-                synced += 1
-        return synced
+    for entry in entries:
+        start_ms, end_ms = _entry_timestamp_millis_range(entry)
+        text = entry["text"].strip()
+        tokens = _subtitle_tokens(text)
+        token_timestamps = _interpolate_token_timestamps(
+            start_ms, end_ms, len(tokens)
+        )
+        sentence = {"text": text, "timestamp": token_timestamps}
+        speaker = _speaker_from_entry(entry)
+        if speaker is not None:
+            sentence["spk"] = speaker
+            has_speaker_labels = True
+        sentences.append(sentence)
+        raw_tokens.extend(tokens)
+        raw_timestamps.extend(token_timestamps)
+        subtitle_overrides[f"{start_ms}-{end_ms}"] = text
 
-    sentence_sync_count = update_sentences("sentences")
-    speaker_sync_count = update_sentences("sd_sentences")
-    return updated_state, max(sentence_sync_count, speaker_sync_count)
+    updated_state["canonical_subtitle_srt"] = render_srt_entries(entries)
+    updated_state["corrected_transcript"] = "\n".join(
+        entry["text"] for entry in entries
+    )
+    updated_state["subtitle_text_overrides"] = subtitle_overrides
+    updated_state["sentences"] = sentences
+    updated_state["recog_res_raw"] = " ".join(raw_tokens)
+    updated_state["timestamp"] = raw_timestamps
+    if has_speaker_labels:
+        for sentence in sentences:
+            sentence.setdefault("spk", "unknown")
+        updated_state["sd_sentences"] = sentences
+    else:
+        updated_state.pop("sd_sentences", None)
+    return updated_state, len(sentences)

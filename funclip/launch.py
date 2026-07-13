@@ -28,6 +28,7 @@ from llm.subtitle_correction import (
     DEFAULT_SUBTITLE_CORRECTION_PROMPT,
     SubtitleCorrectionError,
     correct_srt_with_llm,
+    transcript_from_srt,
     update_state_subtitles,
 )
 from llm.twelvelabs_api import call_twelvelabs_pegasus
@@ -834,7 +835,7 @@ if __name__ == "__main__":
             video_state, audio_state, output_dir):
         if not str(srt_text or "").strip():
             return (
-                gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
                 "请先完成 ASR 识别，再进行字幕修正。",
             )
 
@@ -849,6 +850,7 @@ if __name__ == "__main__":
             )
             corrected_video_state, video_sync_count = update_state_subtitles(video_state, corrected_srt)
             corrected_audio_state, audio_sync_count = update_state_subtitles(audio_state, corrected_srt)
+            corrected_transcript = transcript_from_srt(corrected_srt)
 
             target_dir = str(output_dir or "").strip()
             if target_dir:
@@ -870,6 +872,7 @@ if __name__ == "__main__":
             )
             return (
                 corrected_srt,
+                corrected_transcript,
                 corrected_video_state if video_state is not None else gr.update(),
                 corrected_audio_state if audio_state is not None else gr.update(),
                 corrected_file,
@@ -877,11 +880,11 @@ if __name__ == "__main__":
             )
         except SubtitleCorrectionError as exc:
             logging.warning("Subtitle correction rejected: %s", exc)
-            return gr.update(), gr.update(), gr.update(), gr.update(), f"字幕修正失败：{exc}"
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), f"字幕修正失败：{exc}"
         except Exception as exc:
             logging.exception("Subtitle correction failed.")
             return (
-                gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
                 f"字幕修正失败：{exc}。原字幕未被覆盖。",
             )
 
@@ -1226,7 +1229,7 @@ if __name__ == "__main__":
                             correct_subtitles_with_deepseek,
                             inputs=[video_srt_output, subtitle_correction_prompt, llm_model,
                                     apikey_input, video_state, audio_state, output_dir],
-                            outputs=[video_srt_output, video_state, audio_state,
+                            outputs=[video_srt_output, video_text_output, video_state, audio_state,
                                      corrected_srt_file, subtitle_correction_status])
         subtitle_preview_button.click(
                             preview_subtitle,
