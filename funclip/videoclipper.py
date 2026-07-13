@@ -29,6 +29,7 @@ from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from utils.subtitle_utils import generate_srt, generate_srt_clip, str2list
 from utils.argparse_tools import ArgumentParser, get_commandline_args
 from utils.trans_utils import pre_proc, proc, write_state, load_state, proc_spk, convert_pcm_to_float
+from llm.subtitle_correction import parse_srt_entries, _entry_timestamp_millis_range
 
 
 MAX_SUBTITLE_DURATION_MS = 8000
@@ -260,6 +261,33 @@ def _subtitle_position(video_size, subtitle_size, subtitle_x=50, subtitle_y=88):
 
 def _subtitle_parts(sub):
     return sub[0], sub[1], sub[2] if len(sub) > 2 else None
+
+
+def _corrected_subtitle_cues(subtitle_srt_text):
+    if not str(subtitle_srt_text or "").strip():
+        return []
+    try:
+        return [
+            (start_ms / 1000.0, end_ms / 1000.0, entry["text"])
+            for entry in parse_srt_entries(subtitle_srt_text)
+            for start_ms, end_ms in [_entry_timestamp_millis_range(entry)]
+        ]
+    except Exception:
+        logging.exception("Failed to parse corrected SRT for burned-in subtitles.")
+        return []
+
+
+def _subtitle_cues_for_clip(cues, clip_start, clip_end):
+    subtitles = []
+    for cue_start, cue_end, text in cues:
+        visible_start = max(cue_start, clip_start)
+        visible_end = min(cue_end, clip_end)
+        if visible_end <= visible_start:
+            continue
+        subtitles.append(
+            ((visible_start - clip_start, visible_end - clip_start), text)
+        )
+    return subtitles
 
 
 def _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x=50, subtitle_y=88, highlight_terms=None, highlight_color="yellow"):
@@ -710,17 +738,19 @@ class VideoClipper():
                    subtitle_y=88,
                    highlight_terms=None,
                    highlight_color='yellow',
-                   sound_effect_rules=None,
-                   sound_effect_dir=None,
-                   add_sub=False, 
-                   dest_spk=None, 
-                   output_dir=None,
-                   timestamp_list=None):
+                    sound_effect_rules=None,
+                    sound_effect_dir=None,
+                    add_sub=False,
+                    dest_spk=None,
+                    output_dir=None,
+                    timestamp_list=None,
+                    subtitle_srt_text=None):
         # get from state
         recog_res_raw = state['recog_res_raw']
         timestamp = state['timestamp']
         sentences = state['sentences']
         subtitle_overrides = state.get('subtitle_text_overrides')
+        corrected_subtitle_cues = _corrected_subtitle_cues(subtitle_srt_text)
         video = state['video']
         clip_video_file = state['clip_video_file']
         video_filename = state['video_filename']
@@ -769,13 +799,14 @@ class VideoClipper():
                 sentences, start, end, begin_index=srt_index,
                 time_acc_ost=time_acc_ost, subtitle_overrides=subtitle_overrides
             )
-            sound_effect_subs.extend(subs)
             start, end = start+start_ost/1000.0, end+end_ost/1000.0
+            rendered_subs = _subtitle_cues_for_clip(corrected_subtitle_cues, start, end) or subs
+            sound_effect_subs.extend(rendered_subs)
             video_clip = video.subclip(start, end)
             start_end_info = "from {} to {}".format(start, end)
             clip_srt += srt_clip
             if add_sub:
-                video_clip = _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color)
+                video_clip = _with_subtitles(video_clip, rendered_subs, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color)
             concate_clip = [video_clip]
             time_acc_ost += end - start
             for _ts in ts[1:]:
@@ -784,14 +815,24 @@ class VideoClipper():
                     sentences, start, end, begin_index=srt_index-1,
                     time_acc_ost=time_acc_ost, subtitle_overrides=subtitle_overrides
                 )
-                if not len(subs):
+                if not len(subs) and not corrected_subtitle_cues:
                     continue
-                sound_effect_subs.extend(subs)
-                chi_subs = []
-                sub_starts = subs[0][0][0]
-                for sub in subs:
-                    chi_subs.append(((sub[0][0]-sub_starts, sub[0][1]-sub_starts), sub[1]))
                 start, end = start+start_ost/1000.0, end+end_ost/1000.0
+                rendered_subs = _subtitle_cues_for_clip(corrected_subtitle_cues, start, end)
+                if not rendered_subs:
+                    rendered_subs = subs
+                if not rendered_subs:
+                    continue
+                sound_effect_subs.extend(
+                    [
+                        ((sub[0][0] + time_acc_ost, sub[0][1] + time_acc_ost), sub[1])
+                        for sub in rendered_subs
+                    ]
+                )
+                chi_subs = []
+                sub_starts = rendered_subs[0][0][0]
+                for sub in rendered_subs:
+                    chi_subs.append(((sub[0][0]-sub_starts, sub[0][1]-sub_starts), sub[1]))
                 _video_clip = video.subclip(start, end)
                 start_end_info += ", from {} to {}".format(str(start)[:5], str(end)[:5])
                 clip_srt += srt_clip
