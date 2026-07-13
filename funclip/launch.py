@@ -4,6 +4,7 @@
 #  MIT License  (https://opensource.org/licenses/MIT)
 
 from http import server
+import hashlib
 import json
 import os
 import re
@@ -39,6 +40,7 @@ from introduction import top_md_1, top_md_3, top_md_4
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 LOCAL_TMP_DIR = os.path.join(PROJECT_ROOT, "tmp")
 ASR_TASK_DIR = os.path.join(LOCAL_TMP_DIR, "asr_jobs")
+PIPELINE_TASK_DIR = os.path.join(LOCAL_TMP_DIR, "pipeline_jobs")
 LOCAL_GRADIO_TMP_DIR = os.path.join(PROJECT_ROOT, "gradio_tmp")
 LOCAL_VIDEO_DIR = os.path.join(PROJECT_ROOT, "local_videos")
 LOCAL_SFX_DIR = os.path.abspath(
@@ -50,10 +52,14 @@ LEGACY_MUSIC_DIR = os.path.abspath(
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 USER_SETTINGS_PATH = os.path.join(PROJECT_ROOT, "user_settings.json")
 ASR_TASKS = {}
+PIPELINE_TASKS = {}
 ASR_TASK_LOCK = threading.Lock()
+PIPELINE_TASK_LOCK = threading.Lock()
 ASR_RUN_LOCK = threading.Lock()
+PIPELINE_RUN_LOCK = threading.Lock()
 os.makedirs(LOCAL_TMP_DIR, exist_ok=True)
 os.makedirs(ASR_TASK_DIR, exist_ok=True)
+os.makedirs(PIPELINE_TASK_DIR, exist_ok=True)
 os.makedirs(LOCAL_GRADIO_TMP_DIR, exist_ok=True)
 os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
 os.makedirs(LOCAL_SFX_DIR, exist_ok=True)
