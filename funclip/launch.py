@@ -780,9 +780,11 @@ if __name__ == "__main__":
         composed.alpha_composite(subtitle_image, (int(x), int(y)))
         return composed.convert("RGB")
 
-    def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
+    def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, subtitle_srt, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
         output_dir = output_dir.strip()
         sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
+        if state is not None and str(subtitle_srt or "").strip():
+            state, _ = update_state_subtitles(state, subtitle_srt)
         if not len(output_dir):
             output_dir = None
         else:
@@ -938,7 +940,7 @@ if __name__ == "__main__":
                 dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list)
             return None, (sr, res_audio), message, clip_srt
     
-    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
+    def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, subtitle_srt, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
         timestamp_list = extract_timestamps(LLM_res)
         sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
         if not timestamp_list:
@@ -949,6 +951,9 @@ if __name__ == "__main__":
             output_dir = None
         else:
             output_dir = os.path.abspath(output_dir)
+        if str(subtitle_srt or "").strip():
+            video_state, _ = update_state_subtitles(video_state, subtitle_srt)
+            audio_state, _ = update_state_subtitles(audio_state, subtitle_srt)
         if video_state is not None:
             clip_video_file, message, clip_srt = audio_clipper.video_clip(
                 dest_text, start_ost, end_ost, video_state, 
@@ -1244,6 +1249,7 @@ if __name__ == "__main__":
                                    video_start_ost, 
                                    video_end_ost, 
                                    video_state, 
+                                   video_srt_output,
                                    output_dir, 
                                    font_size, 
                                    font_color,
@@ -1284,6 +1290,7 @@ if __name__ == "__main__":
                                    video_end_ost, 
                                    video_state, 
                                    audio_state, 
+                                   video_srt_output,
                                    output_dir,
                                    font_size,
                                    font_color,
