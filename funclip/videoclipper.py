@@ -767,8 +767,9 @@ class VideoClipper():
         timestamp = state['timestamp']
         sentences = state['sentences']
         subtitle_overrides = state.get('subtitle_text_overrides')
-        use_current_srt_for_subtitles = bool(str(subtitle_srt_text or "").strip())
-        corrected_subtitle_cues = _corrected_subtitle_cues(subtitle_srt_text)
+        subtitle_srt_source = state.get("canonical_subtitle_srt") or subtitle_srt_text
+        use_current_srt_for_subtitles = bool(str(subtitle_srt_source or "").strip())
+        corrected_subtitle_cues = _corrected_subtitle_cues(subtitle_srt_source)
         if use_current_srt_for_subtitles and not corrected_subtitle_cues:
             raise ValueError(
                 "The current SRT could not be parsed. Refusing to fall back to ASR subtitles."
