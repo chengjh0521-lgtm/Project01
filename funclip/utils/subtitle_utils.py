@@ -73,7 +73,7 @@ def generate_srt(sentence_list):
             continue
         t2s = Text2SRT(sent['text'], sent['timestamp'])
         if 'spk' in sent:
-            srt_total += "{}  spk{}\n{}".format(i + 1, sent['spk'], t2s.srt())
+            srt_total += "{}  spk{}\n{}\n".format(i + 1, sent['spk'], t2s.srt())
         else:
             srt_total += "{}\n{}\n".format(i + 1, t2s.srt())
     return srt_total

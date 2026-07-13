@@ -31,30 +31,42 @@ def parse_srt_entries(srt_text):
     if not normalized:
         raise SubtitleCorrectionError("SRT subtitles are empty. Run ASR first.")
 
+    # FunClip's historical speaker-diarization SRT output omits blank lines
+    # between cues. Parse from timestamp lines so both standard and continuous
+    # SRT variants are accepted.
+    lines = normalized.splitlines()
+    timestamp_indices = [
+        index for index, line in enumerate(lines) if _TIMESTAMP_RE.match(line)
+    ]
+    if not timestamp_indices:
+        raise SubtitleCorrectionError("No valid SRT subtitle blocks were found.")
+
     entries = []
-    for block in re.split(r"\n\s*\n", normalized):
-        lines = block.splitlines()
-        timestamp_index = next(
-            (index for index, line in enumerate(lines) if _TIMESTAMP_RE.match(line)),
-            None,
+    for current_index, timestamp_index in enumerate(timestamp_indices):
+        next_timestamp_index = (
+            timestamp_indices[current_index + 1]
+            if current_index + 1 < len(timestamp_indices)
+            else len(lines)
         )
-        if timestamp_index is None:
-            raise SubtitleCorrectionError(
-                "Invalid SRT block: a subtitle timestamp line is missing."
-            )
-        text = "\n".join(lines[timestamp_index + 1 :]).strip()
+        prefix_index = timestamp_index - 1
+        has_prefix = prefix_index >= 0 and re.match(
+            r"^\s*\d+(?:\s+spk\S+)?\s*$", lines[prefix_index]
+        )
+        text_end = next_timestamp_index
+        if current_index + 1 < len(timestamp_indices):
+            next_prefix_index = next_timestamp_index - 1
+            if re.match(r"^\s*\d+(?:\s+spk\S+)?\s*$", lines[next_prefix_index]):
+                text_end = next_prefix_index
+        text = "\n".join(lines[timestamp_index + 1 : text_end]).strip()
         if not text:
             raise SubtitleCorrectionError("Invalid SRT block: subtitle text is empty.")
         entries.append(
             {
-                "prefix": lines[:timestamp_index],
+                "prefix": [lines[prefix_index]] if has_prefix else [],
                 "timestamp": lines[timestamp_index],
                 "text": text,
             }
         )
-
-    if not entries:
-        raise SubtitleCorrectionError("No valid SRT subtitle blocks were found.")
     return entries
 
 
