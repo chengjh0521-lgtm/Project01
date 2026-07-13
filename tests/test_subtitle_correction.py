@@ -58,31 +58,34 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertIn("需要检查糖化血红蛋白", corrected)
         self.assertNotIn("需要检察糖化血红蛋白", corrected)
 
-    def test_discards_asr_lines_omitted_by_deepseek(self):
+    def test_rejects_deepseek_response_that_omits_an_asr_timestamp(self):
         response = "1. [00:00:03,200-00:00:05,000] 需要检查糖化血红蛋白"
-        corrected, changed, total, matched = correct_srt_with_llm(
-            SRT, "校对", lambda *_args: response
-        )
-        self.assertEqual(changed, 1)
-        self.assertEqual(total, 2)
-        self.assertEqual(matched, 1)
-        self.assertNotIn("这个病人血糖有点高", corrected)
-        self.assertNotIn("需要检察糖化血红蛋白", corrected)
-        self.assertIn("需要检查糖化血红蛋白", corrected)
 
-    def test_accepts_deepseek_timestamps_without_matching_asr(self):
+        with self.assertRaisesRegex(SubtitleCorrectionError, "omitted"):
+            correct_srt_with_llm(SRT, "校对", lambda *_args: response)
+
+    def test_rejects_deepseek_timestamps_that_do_not_match_audio(self):
         response = "1. [00:00:10,000-00:00:12,500] DeepSeek 全新结果"
+
+        with self.assertRaisesRegex(SubtitleCorrectionError, "timestamps"):
+            correct_srt_with_llm(SRT, "校对", lambda *_args: response)
+
+    def test_binds_corrected_text_to_original_audio_timestamps(self):
+        response = (
+            "1. [00:00:03,200-00:00:05,000] 修正后的第二句\n"
+            "2. [00:00:01,000-00:00:03,000] 修正后的第一句"
+        )
 
         corrected, changed, total, returned = correct_srt_with_llm(
             SRT, "校对", lambda *_args: response
         )
+        entries = parse_srt_entries(corrected)
 
-        self.assertEqual(total, 2)
-        self.assertEqual(returned, 1)
-        self.assertEqual(changed, 1)
-        self.assertIn("00:00:10,000 --> 00:00:12,500", corrected)
-        self.assertIn("DeepSeek 全新结果", corrected)
-        self.assertNotIn("这个病人血糖有点高", corrected)
+        self.assertEqual((changed, total, returned), (2, 2, 2))
+        self.assertEqual(entries[0]["timestamp"], "00:00:01,000 --> 00:00:03,000")
+        self.assertEqual(entries[0]["text"], "修正后的第一句")
+        self.assertEqual(entries[1]["timestamp"], "00:00:03,200 --> 00:00:05,000")
+        self.assertEqual(entries[1]["text"], "修正后的第二句")
 
     def test_parses_speaker_srt_without_blank_lines_between_cues(self):
         entries = parse_srt_entries(CONTINUOUS_SPEAKER_SRT)
