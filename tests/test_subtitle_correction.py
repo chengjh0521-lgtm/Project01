@@ -137,7 +137,7 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertIn("DeepSeek 修正文案", srt)
         self.assertEqual(next_index, 4)
 
-    def test_updates_rendering_state_without_changing_timestamps(self):
+    def test_rebuilds_all_text_state_from_corrected_srt(self):
         video_handle = threading.Lock()
         state = {
             "recog_res_raw": "raw text",
@@ -154,15 +154,25 @@ class TestSubtitleCorrection(unittest.TestCase):
 
         self.assertEqual(synced, 2)
         self.assertEqual(updated["sentences"][1]["text"], "需要检查糖化血红蛋白")
-        self.assertEqual(updated["sentences"][1]["timestamp"], [[3200, 5000]])
+        self.assertEqual(updated["sentences"][1]["timestamp"][0][0], 3200)
+        self.assertEqual(updated["sentences"][1]["timestamp"][-1][1], 5000)
         self.assertEqual(
             updated["subtitle_text_overrides"]["3200-5000"],
             "需要检查糖化血红蛋白",
         )
+        self.assertIn("需 要 检 查 糖 化 血 红 蛋 白", updated["recog_res_raw"])
+        self.assertNotIn("raw text", updated["recog_res_raw"])
+        self.assertIn("需要检查糖化血红蛋白", updated["canonical_subtitle_srt"])
         self.assertIs(updated["video"], video_handle)
         self.assertEqual(state["sentences"][1]["text"], "旧字幕二")
 
-    def test_keeps_extra_internal_sentences_when_srt_count_differs(self):
+        clip_srt, clip_subs, _ = generate_srt_clip(
+            updated["sentences"], 3.2, 5.0
+        )
+        self.assertIn("需要检查糖化血红蛋白", clip_srt)
+        self.assertEqual(clip_subs[0][1], "需要检查糖化血红蛋白")
+
+    def test_removes_extra_original_asr_sentences(self):
         state = {
             "sentences": [
                 {"text": "旧字幕一", "timestamp": [[1000, 3000]]},
@@ -176,7 +186,8 @@ class TestSubtitleCorrection(unittest.TestCase):
 
         self.assertEqual(synced, 2)
         self.assertEqual(updated["sentences"][1]["text"], "需要检查糖化血红蛋白")
-        self.assertEqual(updated["sentences"][2]["text"], "内部额外句子")
+        self.assertEqual(len(updated["sentences"]), 2)
+        self.assertNotIn("内部额外句子", str(updated))
 
     def test_parse_rejects_non_srt_text(self):
         with self.assertRaises(SubtitleCorrectionError):
