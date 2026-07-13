@@ -804,6 +804,7 @@ if __name__ == "__main__":
                 video_state_value, synced_count = update_state_subtitles(
                     video_state_value, corrected_srt
                 )
+                _mark_deepseek_corrected_state(video_state_value)
                 canonical_srt = _canonical_srt(video_state=video_state_value)
                 if canonical_srt != corrected_srt.strip():
                     raise RuntimeError("Canonical subtitle state differs from DeepSeek output.")
@@ -1083,6 +1084,7 @@ if __name__ == "__main__":
                 video_state_value, synced_count = update_state_subtitles(
                     video_state_value, corrected_srt
                 )
+                _mark_deepseek_corrected_state(video_state_value)
                 canonical_srt = _canonical_srt(video_state=video_state_value)
                 if canonical_srt != corrected_srt.strip():
                     raise RuntimeError("Canonical subtitle state differs from DeepSeek output.")
@@ -1358,6 +1360,22 @@ if __name__ == "__main__":
     def _subtitle_fingerprint(srt_text):
         return hashlib.sha256(str(srt_text or "").encode("utf-8")).hexdigest()[:12]
 
+    def _mark_deepseek_corrected_state(state):
+        if isinstance(state, dict):
+            state["subtitle_source"] = "deepseek-corrected"
+        return state
+
+    def _deepseek_corrected_srt(video_state=None, audio_state=None):
+        for state in (video_state, audio_state):
+            if not isinstance(state, dict):
+                continue
+            if state.get("subtitle_source") != "deepseek-corrected":
+                continue
+            corrected_srt = str(state.get("canonical_subtitle_srt") or "").strip()
+            if corrected_srt:
+                return corrected_srt
+        return ""
+
     def video_clip_addsub(dest_text, video_spk_input, start_ost, end_ost, state, subtitle_srt, output_dir, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color, sound_effect_rules, selected_sfx, selected_sfx_terms):
         output_dir = output_dir.strip()
         sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
@@ -1379,7 +1397,9 @@ if __name__ == "__main__":
             )
         
     def llm_inference(system_content, user_content, srt_text, model, apikey, video_input=None, video_state=None, audio_state=None):
-        srt_text = _canonical_srt(srt_text, video_state, audio_state)
+        srt_text = _deepseek_corrected_srt(video_state, audio_state)
+        if not srt_text:
+            return "DeepSeek subtitle correction must complete before LLM clipping."
         SUPPORT_LLM_PREFIX = ['qwen', 'gpt', 'g4f', 'moonshot', 'deepseek', 'pegasus']
         format_instruction = (
             "\n\nSelect subtitle-aligned highlight material by content quality, not by a fixed duration. "
@@ -1429,10 +1449,8 @@ if __name__ == "__main__":
             )
             corrected_video_state, video_sync_count = update_state_subtitles(video_state, corrected_srt)
             corrected_audio_state, audio_sync_count = update_state_subtitles(audio_state, corrected_srt)
-            if isinstance(corrected_video_state, dict):
-                corrected_video_state["subtitle_source"] = "deepseek-corrected"
-            if isinstance(corrected_audio_state, dict):
-                corrected_audio_state["subtitle_source"] = "deepseek-corrected"
+            _mark_deepseek_corrected_state(corrected_video_state)
+            _mark_deepseek_corrected_state(corrected_audio_state)
             corrected_transcript = transcript_from_srt(corrected_srt)
 
             target_dir = str(output_dir or "").strip()
@@ -1472,9 +1490,9 @@ if __name__ == "__main__":
             )
 
     def llm_subtitle_highlights(llm_clip_result, srt_text, model, apikey, highlight_prompt, highlight_count, video_state=None, audio_state=None):
-        srt_text = _canonical_srt(srt_text, video_state, audio_state)
+        srt_text = _deepseek_corrected_srt(video_state, audio_state)
         if not srt_text:
-            return "Please run ASR first so the SRT subtitles are available."
+            return "DeepSeek subtitle correction must complete before selecting subtitle highlights."
         logging.warning(
             "Subtitle highlight selection uses canonical SRT %s.",
             _subtitle_fingerprint(srt_text),
@@ -1564,9 +1582,9 @@ if __name__ == "__main__":
             output_dir = None
         else:
             output_dir = os.path.abspath(output_dir)
-        subtitle_srt = _canonical_srt(subtitle_srt, video_state, audio_state)
+        subtitle_srt = _deepseek_corrected_srt(video_state, audio_state)
         if not subtitle_srt:
-            return None, None, "No subtitle source is available for caption rendering.", ""
+            return None, None, "DeepSeek subtitle correction must complete before caption rendering.", ""
         subtitle_fingerprint = _subtitle_fingerprint(subtitle_srt)
         logging.warning(
             "Final clip rendering uses canonical SRT %s exclusively.",
