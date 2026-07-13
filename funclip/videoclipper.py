@@ -290,6 +290,29 @@ def _subtitle_cues_for_clip(cues, clip_start, clip_end):
     return subtitles
 
 
+def _format_srt_timestamp(seconds):
+    millis = max(0, int(round(float(seconds) * 1000)))
+    hours, millis = divmod(millis, 3_600_000)
+    minutes, millis = divmod(millis, 60_000)
+    secs, millis = divmod(millis, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def _subtitle_cues_to_srt(cues, begin_index=1, time_offset=0.0):
+    """Render the exact subtitle cues used for the video into an SRT download."""
+    blocks = []
+    for index, ((start, end), text) in enumerate(cues, start=begin_index):
+        blocks.append(
+            "{}\n{} --> {}\n{}".format(
+                index,
+                _format_srt_timestamp(start + time_offset),
+                _format_srt_timestamp(end + time_offset),
+                text,
+            )
+        )
+    return "\n\n".join(blocks) + ("\n\n" if blocks else ""), begin_index + len(cues)
+
+
 def _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x=50, subtitle_y=88, highlight_terms=None, highlight_color="yellow"):
     subtitle_clips = []
     for sub in subs:
@@ -744,7 +767,17 @@ class VideoClipper():
         timestamp = state['timestamp']
         sentences = state['sentences']
         subtitle_overrides = state.get('subtitle_text_overrides')
+        use_current_srt_for_subtitles = bool(str(subtitle_srt_text or "").strip())
         corrected_subtitle_cues = _corrected_subtitle_cues(subtitle_srt_text)
+        if use_current_srt_for_subtitles and not corrected_subtitle_cues:
+            raise ValueError(
+                "The current SRT could not be parsed. Refusing to fall back to ASR subtitles."
+            )
+        if use_current_srt_for_subtitles:
+            logging.warning(
+                "Burned-in subtitles use the current corrected SRT exclusively (%d cues).",
+                len(corrected_subtitle_cues),
+            )
         video = state['video']
         clip_video_file = state['clip_video_file']
         video_filename = state['video_filename']
@@ -784,6 +817,7 @@ class VideoClipper():
         ts = all_ts
         # ts.sort()
         clip_srt = ""
+        rendered_srt_index = 1
         sound_effect_subs = []
         if len(ts):
             if self.lang == 'en' and isinstance(sentences, str):
@@ -791,11 +825,19 @@ class VideoClipper():
             start, end = ts[0][0] / 16000, ts[0][1] / 16000
             srt_clip, subs, srt_index = generate_srt_clip(sentences, start, end, begin_index=srt_index, time_acc_ost=time_acc_ost, subtitle_overrides=subtitle_overrides)
             start, end = start+start_ost/1000.0, end+end_ost/1000.0
-            rendered_subs = _subtitle_cues_for_clip(corrected_subtitle_cues, start, end) or subs
+            if use_current_srt_for_subtitles:
+                # Never fall back to original ASR subtitles when a corrected SRT exists.
+                rendered_subs = _subtitle_cues_for_clip(corrected_subtitle_cues, start, end)
+                rendered_srt, rendered_srt_index = _subtitle_cues_to_srt(
+                    rendered_subs, rendered_srt_index, time_acc_ost
+                )
+                clip_srt += rendered_srt
+            else:
+                rendered_subs = subs
+                clip_srt += srt_clip
             sound_effect_subs.extend(rendered_subs)
             video_clip = video.subclip(start, end)
             start_end_info = "from {} to {}".format(start, end)
-            clip_srt += srt_clip
             if add_sub:
                 video_clip = _with_subtitles(video_clip, rendered_subs, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color)
             concate_clip = [video_clip]
@@ -806,10 +848,16 @@ class VideoClipper():
                 if not len(subs) and not corrected_subtitle_cues:
                     continue
                 start, end = start+start_ost/1000.0, end+end_ost/1000.0
-                rendered_subs = _subtitle_cues_for_clip(corrected_subtitle_cues, start, end)
-                if not rendered_subs:
+                if use_current_srt_for_subtitles:
+                    rendered_subs = _subtitle_cues_for_clip(corrected_subtitle_cues, start, end)
+                    rendered_srt, rendered_srt_index = _subtitle_cues_to_srt(
+                        rendered_subs, rendered_srt_index, time_acc_ost
+                    )
+                    clip_srt += rendered_srt
+                else:
                     rendered_subs = subs
-                if not rendered_subs:
+                    clip_srt += srt_clip
+                if not rendered_subs and not use_current_srt_for_subtitles:
                     continue
                 sound_effect_subs.extend(
                     [
@@ -818,18 +866,22 @@ class VideoClipper():
                     ]
                 )
                 chi_subs = []
-                sub_starts = rendered_subs[0][0][0]
-                for sub in rendered_subs:
-                    chi_subs.append(((sub[0][0]-sub_starts, sub[0][1]-sub_starts), sub[1]))
+                if rendered_subs:
+                    sub_starts = rendered_subs[0][0][0]
+                    for sub in rendered_subs:
+                        chi_subs.append(((sub[0][0]-sub_starts, sub[0][1]-sub_starts), sub[1]))
                 _video_clip = video.subclip(start, end)
                 start_end_info += ", from {} to {}".format(str(start)[:5], str(end)[:5])
-                clip_srt += srt_clip
-                if add_sub:
+                if add_sub and chi_subs:
                     _video_clip = _with_subtitles(_video_clip, chi_subs, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color)
                     # _video_clip.write_videofile("debug.mp4", audio_codec="aac")
                 concate_clip.append(copy.copy(_video_clip))
                 time_acc_ost += end - start
             message = "{} periods found in the audio: ".format(len(ts)) + start_end_info
+            if use_current_srt_for_subtitles:
+                message += "; burned captions source: current corrected SRT ({} cues)".format(
+                    len(corrected_subtitle_cues)
+                )
             logging.warning("Concating...")
             if len(concate_clip) > 1:
                 video_clip = concatenate_videoclips(concate_clip)
