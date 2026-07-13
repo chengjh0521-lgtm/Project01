@@ -15,7 +15,7 @@ from llm.subtitle_correction import (
 )
 from utils.subtitle_utils import generate_srt
 from utils.subtitle_utils import generate_srt_clip
-from videoclipper import _subtitle_cues_for_clip
+from videoclipper import _subtitle_cues_for_clip, _subtitle_cues_to_srt
 
 
 SRT = """1
@@ -125,6 +125,17 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertEqual(subs[0][0][0], 0.0)
         self.assertAlmostEqual(subs[0][0][1], 0.9)
         self.assertEqual(subs[0][1], "DeepSeek 修正文案")
+
+    def test_direct_srt_cues_are_written_to_the_downloaded_clip_srt(self):
+        srt, next_index = _subtitle_cues_to_srt(
+            [((0.0, 0.9), "DeepSeek 修正文案")],
+            begin_index=3,
+            time_offset=12.1,
+        )
+
+        self.assertIn("3\n00:00:12,100 --> 00:00:13,000", srt)
+        self.assertIn("DeepSeek 修正文案", srt)
+        self.assertEqual(next_index, 4)
 
     def test_updates_rendering_state_without_changing_timestamps(self):
         video_handle = threading.Lock()
