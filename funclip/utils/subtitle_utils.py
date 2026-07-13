@@ -118,7 +118,7 @@ def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0
                 for j, ts in enumerate(sent['timestamp']):
                     if ts[1] > start:
                         break
-                _text = override_text if j == 0 and override_text else sentence_tokens[j:]
+                _text = override_text or sentence_tokens[j:]
                 _ts = sent['timestamp'][j:]
             else:
                 for j, ts in enumerate(sent['timestamp']):
@@ -130,7 +130,7 @@ def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0
                         _end = j
                         break
                 # _text = " ".join(sent['text'][_start:_end])
-                _text = sentence_tokens[_start:_end]
+                _text = override_text or sentence_tokens[_start:_end]
                 _ts = sent['timestamp'][_start:_end]
             if len(ts):
                 t2s = Text2SRT(_text, _ts, offset=start)
@@ -143,7 +143,7 @@ def generate_srt_clip(sentence_list, start, end, begin_index=0, time_acc_ost=0.0
             for j, ts in enumerate(sent['timestamp']):
                 if ts[1] > end:
                     break
-            _text = sentence_tokens[:j]
+            _text = override_text or sentence_tokens[:j]
             _ts = sent['timestamp'][:j]
             if len(_ts):
                 t2s = Text2SRT(_text, _ts, offset=start)

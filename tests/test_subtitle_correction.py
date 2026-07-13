@@ -99,6 +99,21 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertIn("DeepSeek 修正文案", srt)
         self.assertEqual(subs[0][1], "DeepSeek 修正文案")
 
+    def test_partial_clip_subtitles_use_correction_override(self):
+        sentences = [
+            {"text": ["原", "始", "文", "案"], "timestamp": [[1000, 1500], [1500, 2000], [2000, 2500], [2500, 3000]]},
+        ]
+
+        srt, subs, _ = generate_srt_clip(
+            sentences,
+            1.6,
+            3.0,
+            subtitle_overrides={"1000-3000": "DeepSeek 修正文案"},
+        )
+
+        self.assertIn("DeepSeek 修正文案", srt)
+        self.assertEqual(subs[0][1], "DeepSeek 修正文案")
+
     def test_updates_rendering_state_without_changing_timestamps(self):
         video_handle = threading.Lock()
         state = {
