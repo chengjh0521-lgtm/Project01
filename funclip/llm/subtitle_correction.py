@@ -28,6 +28,11 @@ _CORRECTION_LINE_RE = re.compile(
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*\]\s*"
     r"(?P<text>.+?)\s*$"
 )
+_NUMBERED_TEXT_RE = re.compile(r"^\s*(?:\d+\s*[.、)]\s*)?(?P<text>.+?)\s*$")
+_LEADING_TIMESTAMP_RANGE_RE = re.compile(
+    r"^\[?\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-\s*"
+    r"\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*\]?\s*"
+)
 
 
 class SubtitleCorrectionError(ValueError):
@@ -164,30 +169,27 @@ def _parse_correction_lines(response_text):
     ):
         raise SubtitleCorrectionError(text)
 
-    fenced = re.search(r"```(?:text)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+    fenced = re.search(r"\`\`\`(?:text)?\s*([\s\S]*?)\s*\`\`\`", text, re.IGNORECASE)
     if fenced:
         text = fenced.group(1).strip()
 
     corrections = []
     for line in text.splitlines():
         match = _CORRECTION_LINE_RE.match(line)
-        if not match:
-            continue
-        corrected_text = match.group("text").strip()
-        if corrected_text:
-            corrections.append(
-                (
-                    _normalize_timestamp(match.group("start")),
-                    _normalize_timestamp(match.group("end")),
-                    corrected_text,
-                )
+        corrected_text = match.group("text").strip() if match else ""
+        if not corrected_text:
+            numbered_match = _NUMBERED_TEXT_RE.match(line)
+            corrected_text = (
+                numbered_match.group("text").strip() if numbered_match else ""
             )
+            corrected_text = _LEADING_TIMESTAMP_RANGE_RE.sub("", corrected_text)
+        if corrected_text:
+            corrections.append(corrected_text)
     if not corrections:
         raise SubtitleCorrectionError(
-            "DeepSeek did not return subtitle lines in the required timestamp format."
+            "DeepSeek did not return usable corrected subtitle lines."
         )
     return corrections
-
 
 def _build_chunks(entries, max_entries=80, max_chars=12000):
     chunks = []
@@ -221,6 +223,12 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
         "除上述内容外，不输出任何解释、分析、总结或额外文字。"
     )
 
+    system_content += (
+        "\n\nOutput rule override: do not output timestamps. Return exactly one "
+        "numbered corrected text line for every input cue, in the same order: "
+        "\`1. corrected text\`. Do not merge, omit, or add lines."
+    )
+
     # DeepSeek owns every corrected text. ASR owns only the audio timestamps,
     # because a text-only LLM cannot safely create a video time axis.
     chunks = _build_chunks(entries)
@@ -248,11 +256,15 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
         )
         source_lines = []
         for index, entry in enumerate(chunk, start=1):
-            start_time, end_time = _entry_timestamp_range(entry)
             source_text = " ".join(entry["text"].splitlines()).strip()
-            source_lines.append(f"{index}. [{start_time}-{end_time}] {source_text}")
+            source_lines.append(f"{index}. {source_text}")
         user_content = (
             "请校对下面这组连续字幕。只返回指定格式。\n"
+            + "\n".join(source_lines)
+        )
+        user_content = (
+            "Proofread the following consecutive subtitle cues. Return only one "
+            "numbered corrected text line per input cue, in the same order.\n"
             + "\n".join(source_lines)
         )
         response = call_model(user_content, system_content)
@@ -266,43 +278,19 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
             received_entries,
             max(0, total_entries - received_entries),
         )
-        expected_ranges = [_entry_timestamp_range(entry) for entry in chunk]
-        corrected_by_range = {}
-        has_duplicate_range = False
-        for start_time, end_time, corrected_text in corrections:
-            key = (start_time, end_time)
-            if key in corrected_by_range:
-                has_duplicate_range = True
-            corrected_by_range[key] = corrected_text
-        if len(corrections) != len(expected_ranges):
+        if len(corrections) != len(chunk):
             raise SubtitleCorrectionError(
                 "DeepSeek returned {} subtitle lines for {} ASR lines in batch {}/{}. "
                 "The original subtitles were kept because a complete corrected text "
                 "response is required.".format(
-                    len(corrections), len(expected_ranges), chunk_index, total_chunks
+                    len(corrections), len(chunk), chunk_index, total_chunks
                 )
             )
 
-        # Time fields from a text LLM are unreliable. If it returned one line
-        # per input cue but rewrote a timestamp, keep the response order and
-        # bind its text back to the immutable ASR audio timeline.
-        if has_duplicate_range or set(corrected_by_range) != set(expected_ranges):
-            logging.warning(
-                "Subtitle correction batch %d/%d rewrote timestamps; ignoring LLM "
-                "timestamps and binding %d corrected text lines to ASR cue order.",
-                chunk_index,
-                total_chunks,
-                len(corrections),
-            )
-            corrected_texts = [correction[2] for correction in corrections]
-        else:
-            corrected_texts = [
-                corrected_by_range[(start_time, end_time)]
-                for start_time, end_time in expected_ranges
-            ]
-
-        for (start_time, end_time), corrected_text in zip(
-                expected_ranges, corrected_texts):
+        # DeepSeek owns text only. ASR timestamps remain the immutable audio
+        # timeline and corrected lines are bound to it by their cue order.
+        for entry, corrected_text in zip(chunk, corrections):
+            start_time, end_time = _entry_timestamp_range(entry)
             llm_entries.append(
                 {
                     "prefix": [str(len(llm_entries) + 1)],
