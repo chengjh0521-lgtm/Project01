@@ -722,7 +722,9 @@ if __name__ == "__main__":
         message = task.get("message", "")
         if status == "done":
             res_text, res_srt, video_state, audio_state, text_file, srt_file = task.get("result")
-            return f"Done. Job ID: {job_id}\n{message}", res_text, res_srt, video_state, audio_state, text_file, srt_file, job_id
+            # The completed ASR result has been loaded once. Clear the job ID so
+            # the timer cannot later overwrite a DeepSeek-corrected subtitle state.
+            return f"Done. Job ID: {job_id}\n{message}", res_text, res_srt, video_state, audio_state, text_file, srt_file, ""
         if status == "failed":
             detail = task.get("traceback") or ""
             return f"Failed. Job ID: {job_id}\n{message}\n{detail[-2000:]}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
@@ -1427,6 +1429,10 @@ if __name__ == "__main__":
             )
             corrected_video_state, video_sync_count = update_state_subtitles(video_state, corrected_srt)
             corrected_audio_state, audio_sync_count = update_state_subtitles(audio_state, corrected_srt)
+            if isinstance(corrected_video_state, dict):
+                corrected_video_state["subtitle_source"] = "deepseek-corrected"
+            if isinstance(corrected_audio_state, dict):
+                corrected_audio_state["subtitle_source"] = "deepseek-corrected"
             corrected_transcript = transcript_from_srt(corrected_srt)
 
             target_dir = str(output_dir or "").strip()
@@ -1469,6 +1475,10 @@ if __name__ == "__main__":
         srt_text = _canonical_srt(srt_text, video_state, audio_state)
         if not srt_text:
             return "Please run ASR first so the SRT subtitles are available."
+        logging.warning(
+            "Subtitle highlight selection uses canonical SRT %s.",
+            _subtitle_fingerprint(srt_text),
+        )
         timestamp_list = extract_timestamps(llm_clip_result)
         if not timestamp_list:
             return "Please run LLM Inference first so highlight timestamps are available in LLM Clipper Result."
@@ -1528,7 +1538,12 @@ if __name__ == "__main__":
                 "", 0, 0, video_state,
                 dest_spk=None, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=False,
                 sound_effect_rules=sound_effect_rules, sound_effect_dir=LOCAL_SFX_DIR)
-            message = _llm_clip_range_message(timestamp_list) + "\n" + message
+            message = (
+                _llm_clip_range_message(timestamp_list)
+                + f"\nCanonical subtitle SRT: {subtitle_fingerprint}"
+                + "\n"
+                + message
+            )
             logging.warning(message)
             return clip_video_file, None, message, clip_srt
         if audio_state is not None:
@@ -1550,9 +1565,15 @@ if __name__ == "__main__":
         else:
             output_dir = os.path.abspath(output_dir)
         subtitle_srt = _canonical_srt(subtitle_srt, video_state, audio_state)
-        if subtitle_srt:
-            video_state, _ = update_state_subtitles(video_state, subtitle_srt)
-            audio_state, _ = update_state_subtitles(audio_state, subtitle_srt)
+        if not subtitle_srt:
+            return None, None, "No subtitle source is available for caption rendering.", ""
+        subtitle_fingerprint = _subtitle_fingerprint(subtitle_srt)
+        logging.warning(
+            "Final clip rendering uses canonical SRT %s exclusively.",
+            subtitle_fingerprint,
+        )
+        video_state, _ = update_state_subtitles(video_state, subtitle_srt)
+        audio_state, _ = update_state_subtitles(audio_state, subtitle_srt)
         if video_state is not None:
             clip_video_file, message, clip_srt = audio_clipper.video_clip(
                 "", 0, 0, video_state,
