@@ -181,25 +181,6 @@ def _parse_correction_lines(response_text):
     return corrections
 
 
-def _build_chunks(entries, max_entries=80, max_chars=12000):
-    chunks = []
-    current = []
-    current_chars = 0
-    for item in entries:
-        item_chars = len(item["text"])
-        if current and (
-            len(current) >= max_entries or current_chars + item_chars > max_chars
-        ):
-            chunks.append(current)
-            current = []
-            current_chars = 0
-        current.append(item)
-        current_chars += item_chars
-    if current:
-        chunks.append(current)
-    return chunks
-
-
 def correct_srt_with_llm(srt_text, correction_prompt, call_model):
     entries = parse_srt_entries(srt_text)
     system_content = (
@@ -216,26 +197,26 @@ def correct_srt_with_llm(srt_text, correction_prompt, call_model):
     # DeepSeek's response becomes the new source of truth. Do not merge it back
     # into the ASR entries: omitted, changed, or newly-timed lines from the LLM
     # must not cause original ASR text to survive downstream.
+    source_lines = []
+    for index, entry in enumerate(entries, start=1):
+        start_time, end_time = _entry_timestamp_range(entry)
+        source_text = " ".join(entry["text"].splitlines()).strip()
+        source_lines.append(f"{index}. [{start_time}-{end_time}] {source_text}")
+
+    user_content = (
+        "请校对下面这组连续字幕。只返回指定格式。\n"
+        + "\n".join(source_lines)
+    )
+    response = call_model(user_content, system_content)
     llm_entries = []
-    for chunk in _build_chunks(entries):
-        source_lines = []
-        for index, entry in enumerate(chunk, start=1):
-            start_time, end_time = _entry_timestamp_range(entry)
-            source_text = " ".join(entry["text"].splitlines()).strip()
-            source_lines.append(f"{index}. [{start_time}-{end_time}] {source_text}")
-        user_content = (
-            "请校对下面这组连续字幕。只返回指定格式。\n"
-            + "\n".join(source_lines)
+    for start_time, end_time, corrected_text in _parse_correction_lines(response):
+        llm_entries.append(
+            {
+                "prefix": [str(len(llm_entries) + 1)],
+                "timestamp": f"{start_time} --> {end_time}",
+                "text": corrected_text,
+            }
         )
-        response = call_model(user_content, system_content)
-        for start_time, end_time, corrected_text in _parse_correction_lines(response):
-            llm_entries.append(
-                {
-                    "prefix": [str(len(llm_entries) + 1)],
-                    "timestamp": f"{start_time} --> {end_time}",
-                    "text": corrected_text,
-                }
-            )
 
     if not llm_entries:
         raise SubtitleCorrectionError(
