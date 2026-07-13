@@ -2,9 +2,16 @@ import logging
 import re
 
 
-DEFAULT_SUBTITLE_CORRECTION_PROMPT = (
+LEGACY_DEFAULT_SUBTITLE_CORRECTION_PROMPT = (
     "你是一名医疗视频字幕校对员。请结合上下文修正 ASR 造成的同音字、错别字、漏标点和医学术语错误，"
     "尤其留意四川话口音可能导致的误识别。保持医生原本的语气和含义，不扩写、不总结、不删除有效信息。"
+)
+DEFAULT_SUBTITLE_CORRECTION_PROMPT = (
+    "你是一名资深中文医疗访谈字幕校对员，熟悉临床医学术语、医生口语表达和四川话常见同音误识别。"
+    "请结合当前字幕前后至少两句的语境校对文字。优先修正可由上下文明确定的同音字、近音字、错别字、"
+    "漏字、明显错断句、医学名词、药物名、检查项目、疾病名称、剂量和数值单位。"
+    "只做校对，不做改写：保留医生原本的语气、口头停顿和表达顺序；不要总结、扩写、解释、润色成书面语，"
+    "不要把不确定的口语词强行替换成医学术语。遇到无法凭上下文确定的内容，宁可保留原文。"
 )
 
 _TIMESTAMP_RE = re.compile(
@@ -23,60 +30,8 @@ _CORRECTION_LINE_RE = re.compile(
 )
 
 
-_LLM_HIGHLIGHT_LINE_RE = re.compile(
-    r"^\s*(?:\d+\s*[.、)]\s*)?\[\s*"
-    r"(?P<start>\d{1,2}:\d{2}:\d{2}(?:[,.]\d{1,3})?)\s*"
-    r"(?:-->|-|~|至|到)\s*"
-    r"(?P<end>\d{1,2}:\d{2}:\d{2}(?:[,.]\d{1,3})?)\s*\]\s*"
-    r"(?P<text>.+?)\s*$"
-)
-
 class SubtitleCorrectionError(ValueError):
     pass
-
-
-def _timestamp_to_milliseconds(timestamp):
-    hours, minutes, seconds = str(timestamp).replace(",", ".").split(":")
-    second_parts = seconds.split(".", 1)
-    whole_seconds = int(second_parts[0])
-    millis = int((second_parts[1] if len(second_parts) == 2 else "0").ljust(3, "0")[:3])
-    return (int(hours) * 3600 + int(minutes) * 60 + whole_seconds) * 1000 + millis
-
-
-def _format_srt_timestamp(milliseconds):
-    hours, milliseconds = divmod(int(milliseconds), 3_600_000)
-    minutes, milliseconds = divmod(milliseconds, 60_000)
-    seconds, milliseconds = divmod(milliseconds, 1_000)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
-
-
-def render_llm_highlight_srt(llm_result):
-    """Turn step-three LLM highlight lines into the only SRT used for captions."""
-    blocks = []
-    ranges = []
-    for line in str(llm_result or "").splitlines():
-        match = _LLM_HIGHLIGHT_LINE_RE.match(line)
-        if not match:
-            continue
-        text = match.group("text").strip()
-        start_ms = _timestamp_to_milliseconds(match.group("start"))
-        end_ms = _timestamp_to_milliseconds(match.group("end"))
-        if not text or end_ms <= start_ms:
-            continue
-        ranges.append([start_ms, end_ms])
-        blocks.append(
-            "{}\n{} --> {}\n{}".format(
-                len(blocks) + 1,
-                _format_srt_timestamp(start_ms),
-                _format_srt_timestamp(end_ms),
-                text,
-            )
-        )
-    if not blocks:
-        raise SubtitleCorrectionError(
-            "Step 3 did not return highlight lines in the required [start-end] text format."
-        )
-    return "\n\n".join(blocks) + "\n", ranges
 
 
 def parse_srt_entries(srt_text):
