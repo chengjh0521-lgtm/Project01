@@ -68,12 +68,29 @@ class TestSubtitleCorrection(unittest.TestCase):
         }
         corrected = SRT.replace("需要检察糖化血红蛋白", "需要检查糖化血红蛋白")
 
-        updated = update_state_subtitles(state, corrected)
+        updated, synced = update_state_subtitles(state, corrected)
 
+        self.assertEqual(synced, 2)
         self.assertEqual(updated["sentences"][1]["text"], "需要检查糖化血红蛋白")
         self.assertEqual(updated["sentences"][1]["timestamp"], [[3200, 5000]])
         self.assertIs(updated["video"], video_handle)
         self.assertEqual(state["sentences"][1]["text"], "旧字幕二")
+
+    def test_keeps_extra_internal_sentences_when_srt_count_differs(self):
+        state = {
+            "sentences": [
+                {"text": "旧字幕一", "timestamp": [[1000, 3000]]},
+                {"text": "旧字幕二", "timestamp": [[3200, 5000]]},
+                {"text": "内部额外句子", "timestamp": [[6000, 7000]]},
+            ],
+        }
+        corrected = SRT.replace("需要检察糖化血红蛋白", "需要检查糖化血红蛋白")
+
+        updated, synced = update_state_subtitles(state, corrected)
+
+        self.assertEqual(synced, 2)
+        self.assertEqual(updated["sentences"][1]["text"], "需要检查糖化血红蛋白")
+        self.assertEqual(updated["sentences"][2]["text"], "内部额外句子")
 
     def test_parse_rejects_non_srt_text(self):
         with self.assertRaises(SubtitleCorrectionError):
