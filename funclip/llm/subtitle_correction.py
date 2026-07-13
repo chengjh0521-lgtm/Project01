@@ -23,8 +23,60 @@ _CORRECTION_LINE_RE = re.compile(
 )
 
 
+_LLM_HIGHLIGHT_LINE_RE = re.compile(
+    r"^\s*(?:\d+\s*[.、)]\s*)?\[\s*"
+    r"(?P<start>\d{1,2}:\d{2}:\d{2}(?:[,.]\d{1,3})?)\s*"
+    r"(?:-->|-|~|至|到)\s*"
+    r"(?P<end>\d{1,2}:\d{2}:\d{2}(?:[,.]\d{1,3})?)\s*\]\s*"
+    r"(?P<text>.+?)\s*$"
+)
+
 class SubtitleCorrectionError(ValueError):
     pass
+
+
+def _timestamp_to_milliseconds(timestamp):
+    hours, minutes, seconds = str(timestamp).replace(",", ".").split(":")
+    second_parts = seconds.split(".", 1)
+    whole_seconds = int(second_parts[0])
+    millis = int((second_parts[1] if len(second_parts) == 2 else "0").ljust(3, "0")[:3])
+    return (int(hours) * 3600 + int(minutes) * 60 + whole_seconds) * 1000 + millis
+
+
+def _format_srt_timestamp(milliseconds):
+    hours, milliseconds = divmod(int(milliseconds), 3_600_000)
+    minutes, milliseconds = divmod(milliseconds, 60_000)
+    seconds, milliseconds = divmod(milliseconds, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
+
+def render_llm_highlight_srt(llm_result):
+    """Turn step-three LLM highlight lines into the only SRT used for captions."""
+    blocks = []
+    ranges = []
+    for line in str(llm_result or "").splitlines():
+        match = _LLM_HIGHLIGHT_LINE_RE.match(line)
+        if not match:
+            continue
+        text = match.group("text").strip()
+        start_ms = _timestamp_to_milliseconds(match.group("start"))
+        end_ms = _timestamp_to_milliseconds(match.group("end"))
+        if not text or end_ms <= start_ms:
+            continue
+        ranges.append([start_ms, end_ms])
+        blocks.append(
+            "{}\n{} --> {}\n{}".format(
+                len(blocks) + 1,
+                _format_srt_timestamp(start_ms),
+                _format_srt_timestamp(end_ms),
+                text,
+            )
+        )
+    if not blocks:
+        raise SubtitleCorrectionError(
+            "Step 3 did not return highlight lines in the required [start-end] text format."
+        )
+    return "\n\n".join(blocks) + "\n", ranges
 
 
 def parse_srt_entries(srt_text):
