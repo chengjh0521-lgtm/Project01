@@ -2,6 +2,7 @@ import sys
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,7 @@ from llm.subtitle_correction import (
 from utils.subtitle_utils import generate_srt
 from utils.subtitle_utils import generate_srt_clip
 from videoclipper import _subtitle_cues_for_clip, _subtitle_cues_to_srt
+from videoclipper import VideoClipper
 
 
 SRT = """1
@@ -152,6 +154,84 @@ class TestSubtitleCorrection(unittest.TestCase):
         self.assertIn("3\n00:00:12,100 --> 00:00:13,000", srt)
         self.assertIn("DeepSeek 修正文案", srt)
         self.assertEqual(next_index, 4)
+
+    def test_video_burn_uses_explicit_corrected_srt_without_asr_generation(self):
+        class FakeVideo:
+            size = (720, 1280)
+
+            def subclip(self, _start, _end):
+                return self
+
+            def write_videofile(self, *_args, **_kwargs):
+                return None
+
+        state = {
+            "video": FakeVideo(),
+            "video_filename": "source.mp4",
+            "clip_video_file": "source_clip.mp4",
+            "recog_res_raw": "第 一 步 错 误 字 幕",
+            "timestamp": [[1000, 3000]],
+            "sentences": [
+                {
+                    "text": "第一步错误字幕",
+                    "timestamp": [[1000, 3000]],
+                }
+            ],
+        }
+        corrected_srt = """1
+00:00:01,000 --> 00:00:03,000
+第二步 DeepSeek 修正字幕
+"""
+        clipper = VideoClipper(None)
+        clipper.lang = "zh"
+
+        with patch(
+                "videoclipper.generate_srt_clip",
+                side_effect=AssertionError("ASR subtitle generation must not run"),
+        ), patch(
+                "videoclipper._with_subtitles",
+                side_effect=lambda video, *_args, **_kwargs: video,
+        ) as burn_subtitles, patch(
+                "videoclipper._with_sound_effects",
+                side_effect=lambda video, *_args, **_kwargs: (video, 0),
+        ):
+            _, message, clip_srt = clipper.video_clip(
+                "",
+                0,
+                0,
+                state,
+                timestamp_list=[[1000, 3000]],
+                add_sub=True,
+                subtitle_srt_text=corrected_srt,
+            )
+
+        burned_subtitles = burn_subtitles.call_args.args[1]
+        self.assertEqual(burned_subtitles[0][1], "第二步 DeepSeek 修正字幕")
+        self.assertNotIn("第一步错误字幕", str(burned_subtitles))
+        self.assertIn("第二步 DeepSeek 修正字幕", clip_srt)
+        self.assertNotIn("第一步错误字幕", clip_srt)
+        self.assertIn("explicit corrected SRT", message)
+
+    def test_video_burn_refuses_asr_fallback_without_explicit_srt(self):
+        clipper = VideoClipper(None)
+        clipper.lang = "zh"
+
+        with self.assertRaisesRegex(ValueError, "require the corrected SRT"):
+            clipper.video_clip(
+                "",
+                0,
+                0,
+                {
+                    "video": object(),
+                    "video_filename": "source.mp4",
+                    "clip_video_file": "source_clip.mp4",
+                    "recog_res_raw": "第一步字幕",
+                    "timestamp": [[1000, 3000]],
+                    "sentences": [],
+                },
+                timestamp_list=[[1000, 3000]],
+                add_sub=True,
+            )
 
     def test_rebuilds_all_text_state_from_corrected_srt(self):
         video_handle = threading.Lock()

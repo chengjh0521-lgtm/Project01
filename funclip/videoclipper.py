@@ -314,6 +314,18 @@ def _subtitle_cues_to_srt(cues, begin_index=1, time_offset=0.0):
     return "\n\n".join(blocks) + ("\n\n" if blocks else ""), begin_index + len(cues)
 
 
+def _authoritative_subtitles_for_clip(
+        subtitle_cues, clip_start, clip_end, begin_index=1, time_offset=0.0):
+    """Build one clip's subtitle track exclusively from the supplied SRT cues."""
+    subtitles = _subtitle_cues_for_clip(subtitle_cues, clip_start, clip_end)
+    srt_text, next_index = _subtitle_cues_to_srt(
+        subtitles,
+        begin_index=begin_index,
+        time_offset=time_offset,
+    )
+    return srt_text, subtitles, next_index
+
+
 def _with_subtitles(video_clip, subs, font_size, font_color, subtitle_x=50, subtitle_y=88, highlight_terms=None, highlight_color="yellow"):
     subtitle_clips = []
     for sub in subs:
@@ -773,28 +785,33 @@ class VideoClipper():
                     output_dir=None,
                     timestamp_list=None,
                     subtitle_srt_text=None):
-        # get from state
-        recog_res_raw = state['recog_res_raw']
-        timestamp = state['timestamp']
-        sentences = state['sentences']
-        subtitle_overrides = state.get('subtitle_text_overrides')
-        subtitle_srt_source = state.get("canonical_subtitle_srt") or subtitle_srt_text
-        use_current_srt_for_subtitles = bool(str(subtitle_srt_source or "").strip())
-        corrected_subtitle_cues = _corrected_subtitle_cues(subtitle_srt_source)
-        if use_current_srt_for_subtitles and not corrected_subtitle_cues:
+        # Burned captions are an explicit input. They must never be reconstructed
+        # from the ASR state, because that state may still contain step-one text.
+        subtitle_srt_source = str(subtitle_srt_text or "").strip()
+        use_authoritative_srt = bool(subtitle_srt_source)
+        authoritative_subtitle_cues = _corrected_subtitle_cues(subtitle_srt_source)
+        if add_sub and not use_authoritative_srt:
             raise ValueError(
-                "The current SRT could not be parsed. Refusing to fall back to ASR subtitles."
+                "Burned-in subtitles require the corrected SRT from step 2."
             )
-        if use_current_srt_for_subtitles:
+        if use_authoritative_srt and not authoritative_subtitle_cues:
+            raise ValueError(
+                "The supplied corrected SRT could not be parsed. "
+                "Refusing to fall back to ASR subtitles."
+            )
+        if use_authoritative_srt:
             logging.warning(
-                "Burned-in subtitles use the current corrected SRT exclusively (%d cues).",
-                len(corrected_subtitle_cues),
+                "Burned-in subtitles use the explicitly supplied corrected SRT "
+                "exclusively (%d cues).",
+                len(authoritative_subtitle_cues),
             )
         video = state['video']
         clip_video_file = state['clip_video_file']
         video_filename = state['video_filename']
         
         if timestamp_list is None:
+            recog_res_raw = state['recog_res_raw']
+            timestamp = state['timestamp']
             all_ts = []
             if dest_spk is None or dest_spk == '' or 'sd_sentences' not in state:
                 for _dest_text in dest_text.split('#'):
@@ -832,25 +849,29 @@ class VideoClipper():
         rendered_srt_index = 1
         sound_effect_subs = []
         if len(ts):
+            sentences = state.get('sentences', [])
+            subtitle_overrides = state.get('subtitle_text_overrides')
             if self.lang == 'en' and isinstance(sentences, str):
                 sentences = sentences.split()
             start, end = ts[0][0] / 16000, ts[0][1] / 16000
-            srt_clip, subs, srt_index = generate_srt_clip(
-                sentences, start, end, begin_index=srt_index,
-                time_acc_ost=time_acc_ost, subtitle_overrides=subtitle_overrides
-            )
             start, end = start+start_ost/1000.0, end+end_ost/1000.0
-            if use_current_srt_for_subtitles:
-                # This is deliberately not allowed to fall back to ``subs``. Those
-                # are derived from the original ASR state and would reintroduce
-                # uncorrected text into the rendered video.
-                rendered_subs = _subtitle_cues_for_clip(corrected_subtitle_cues, start, end)
-                rendered_srt, rendered_srt_index = _subtitle_cues_to_srt(
-                    rendered_subs, rendered_srt_index, time_acc_ost
+            if use_authoritative_srt:
+                rendered_srt, rendered_subs, rendered_srt_index = (
+                    _authoritative_subtitles_for_clip(
+                        authoritative_subtitle_cues,
+                        start,
+                        end,
+                        rendered_srt_index,
+                        time_acc_ost,
+                    )
                 )
                 clip_srt += rendered_srt
             else:
-                rendered_subs = subs
+                srt_clip, rendered_subs, srt_index = generate_srt_clip(
+                    sentences, start, end, begin_index=srt_index,
+                    time_acc_ost=time_acc_ost,
+                    subtitle_overrides=subtitle_overrides,
+                )
                 clip_srt += srt_clip
             sound_effect_subs.extend(rendered_subs)
             video_clip = video.subclip(start, end)
@@ -861,23 +882,26 @@ class VideoClipper():
             time_acc_ost += end - start
             for _ts in ts[1:]:
                 start, end = _ts[0] / 16000, _ts[1] / 16000
-                srt_clip, subs, srt_index = generate_srt_clip(
-                    sentences, start, end, begin_index=srt_index-1,
-                    time_acc_ost=time_acc_ost, subtitle_overrides=subtitle_overrides
-                )
-                if not len(subs) and not corrected_subtitle_cues:
-                    continue
                 start, end = start+start_ost/1000.0, end+end_ost/1000.0
-                if use_current_srt_for_subtitles:
-                    rendered_subs = _subtitle_cues_for_clip(corrected_subtitle_cues, start, end)
-                    rendered_srt, rendered_srt_index = _subtitle_cues_to_srt(
-                        rendered_subs, rendered_srt_index, time_acc_ost
+                if use_authoritative_srt:
+                    rendered_srt, rendered_subs, rendered_srt_index = (
+                        _authoritative_subtitles_for_clip(
+                            authoritative_subtitle_cues,
+                            start,
+                            end,
+                            rendered_srt_index,
+                            time_acc_ost,
+                        )
                     )
                     clip_srt += rendered_srt
                 else:
-                    rendered_subs = subs
+                    srt_clip, rendered_subs, srt_index = generate_srt_clip(
+                        sentences, start, end, begin_index=srt_index-1,
+                        time_acc_ost=time_acc_ost,
+                        subtitle_overrides=subtitle_overrides,
+                    )
                     clip_srt += srt_clip
-                if not rendered_subs and not use_current_srt_for_subtitles:
+                if not rendered_subs and not use_authoritative_srt:
                     continue
                 sound_effect_subs.extend(
                     [
@@ -885,22 +909,17 @@ class VideoClipper():
                         for sub in rendered_subs
                     ]
                 )
-                chi_subs = []
-                if rendered_subs:
-                    sub_starts = rendered_subs[0][0][0]
-                    for sub in rendered_subs:
-                        chi_subs.append(((sub[0][0]-sub_starts, sub[0][1]-sub_starts), sub[1]))
                 _video_clip = video.subclip(start, end)
                 start_end_info += ", from {} to {}".format(str(start)[:5], str(end)[:5])
-                if add_sub and chi_subs:
-                    _video_clip = _with_subtitles(_video_clip, chi_subs, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color)
+                if add_sub and rendered_subs:
+                    _video_clip = _with_subtitles(_video_clip, rendered_subs, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color)
                     # _video_clip.write_videofile("debug.mp4", audio_codec="aac")
                 concate_clip.append(copy.copy(_video_clip))
                 time_acc_ost += end - start
             message = "{} periods found in the audio: ".format(len(ts)) + start_end_info
-            if use_current_srt_for_subtitles:
-                message += "; burned captions source: current corrected SRT ({} cues)".format(
-                    len(corrected_subtitle_cues)
+            if use_authoritative_srt:
+                message += "; burned captions source: explicit corrected SRT ({} cues)".format(
+                    len(authoritative_subtitle_cues)
                 )
             logging.warning("Concating...")
             if len(concate_clip) > 1:
