@@ -728,6 +728,275 @@ if __name__ == "__main__":
             return f"Failed. Job ID: {job_id}\n{message}\n{detail[-2000:]}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
         return f"{status.title()}. Job ID: {job_id}\n{message}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
     
+    def _pipeline_job_dir(job_id):
+        safe_job_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", job_id or "")
+        return os.path.join(PIPELINE_TASK_DIR, safe_job_id)
+
+    def _set_pipeline_task(job_id, **updates):
+        with PIPELINE_TASK_LOCK:
+            task = PIPELINE_TASKS.setdefault(job_id, {})
+            task.update(updates)
+            try:
+                job_dir = _pipeline_job_dir(job_id)
+                os.makedirs(job_dir, exist_ok=True)
+                record = {key: value for key, value in task.items() if key != "result"}
+                with open(os.path.join(job_dir, "task.json"), "w", encoding="utf-8") as record_file:
+                    json.dump(record, record_file, ensure_ascii=False, indent=2)
+            except Exception:
+                logging.exception("Failed to persist one-click task record: %s", job_id)
+
+    def _get_pipeline_task(job_id):
+        with PIPELINE_TASK_LOCK:
+            task = dict(PIPELINE_TASKS.get(job_id) or {})
+        if task:
+            return task
+        record_path = os.path.join(_pipeline_job_dir(job_id), "task.json")
+        if not os.path.isfile(record_path):
+            return {}
+        try:
+            with open(record_path, "r", encoding="utf-8") as record_file:
+                return json.load(record_file)
+        except Exception:
+            logging.exception("Failed to load one-click task record: %s", job_id)
+            return {"status": "failed", "message": "Task record could not be loaded."}
+
+    def _pipeline_step(job_id, step, message):
+        _set_pipeline_task(
+            job_id,
+            status="running",
+            step=step,
+            message=f"Step {step}/5: {message}",
+        )
+
+    def _run_one_click_pipeline(
+            job_id, local_video, video_input, hotwords, output_dir,
+            correction_prompt, prompt_system, prompt_user, model, apikey,
+            highlight_prompt_value, highlight_count_value,
+            font_size_value, font_color_value, subtitle_x_value, subtitle_y_value,
+            highlight_color_value, sound_effect_rules_value, selected_sfx,
+            selected_sfx_terms_value):
+        try:
+            with PIPELINE_RUN_LOCK:
+                if str(model or "").startswith("pegasus"):
+                    raise ValueError(
+                        "The one-click subtitle pipeline requires a text LLM such as DeepSeek."
+                    )
+                _pipeline_step(job_id, 1, "Running ASR and generating the original SRT.")
+                with ASR_RUN_LOCK:
+                    asr_result = mix_recog(
+                        local_video, video_input, None, hotwords, output_dir
+                    )
+                if asr_result is None or asr_result[2] is None:
+                    raise ValueError("One-click processing requires a video input.")
+                _, original_srt, video_state_value, _, _, _ = asr_result
+
+                _pipeline_step(job_id, 2, "Correcting ASR subtitles with DeepSeek.")
+                deepseek_model = model if str(model or "").startswith("deepseek") else DEFAULT_LLM_MODEL
+                corrected_srt, changed_count, total_count, matched_count = correct_srt_with_llm(
+                    original_srt,
+                    correction_prompt,
+                    lambda user_content, system_content: openai_call(
+                        apikey, deepseek_model, user_content, system_content
+                    ),
+                )
+                video_state_value, synced_count = update_state_subtitles(
+                    video_state_value, corrected_srt
+                )
+                canonical_srt = _canonical_srt(video_state=video_state_value)
+                if canonical_srt != corrected_srt.strip():
+                    raise RuntimeError("Canonical subtitle state differs from DeepSeek output.")
+                corrected_text = transcript_from_srt(canonical_srt)
+                fingerprint = _subtitle_fingerprint(canonical_srt)
+                logging.warning(
+                    "One-click task %s canonical corrected SRT: %s",
+                    job_id,
+                    fingerprint,
+                )
+                pipeline_dir = str(output_dir or "").strip()
+                pipeline_dir = os.path.abspath(pipeline_dir) if pipeline_dir else DEFAULT_OUTPUT_DIR
+                os.makedirs(pipeline_dir, exist_ok=True)
+                corrected_srt_path = os.path.join(
+                    pipeline_dir,
+                    f"subtitle_corrected_{job_id}.srt",
+                )
+                with open(corrected_srt_path, "w", encoding="utf-8") as corrected_file:
+                    corrected_file.write(corrected_srt)
+
+                _pipeline_step(
+                    job_id, 3,
+                    f"Selecting highlights from corrected SRT {fingerprint}.",
+                )
+                source_video = video_state_value.get("video_filename")
+                llm_result_value = llm_inference(
+                    prompt_system, prompt_user, canonical_srt, model, apikey,
+                    source_video, video_state_value, None,
+                )
+                if str(llm_result_value or "").lower().startswith((
+                        "llm inference failed:", "api key is required")):
+                    raise RuntimeError(llm_result_value)
+                timestamp_list = extract_timestamps(llm_result_value)
+                if not timestamp_list:
+                    raise RuntimeError(
+                        "Step 3 returned no valid highlight timestamp ranges."
+                    )
+
+                _pipeline_step(
+                    job_id, 4,
+                    f"Selecting emphasized terms from corrected SRT {fingerprint}.",
+                )
+                highlight_terms_value = llm_subtitle_highlights(
+                    llm_result_value, canonical_srt, model, apikey,
+                    highlight_prompt_value, highlight_count_value,
+                    video_state_value, None,
+                )
+                if str(highlight_terms_value or "").lower().startswith((
+                        "llm inference failed:", "api key is required", "please run")):
+                    raise RuntimeError(highlight_terms_value)
+
+                _pipeline_step(
+                    job_id, 5,
+                    f"Clipping LLM highlights and burning corrected SRT {fingerprint}.",
+                )
+                if _subtitle_fingerprint(_canonical_srt(video_state=video_state_value)) != fingerprint:
+                    raise RuntimeError("Subtitle source changed before final rendering.")
+                sound_effect_rules_value = _sync_sound_effect_binding(
+                    sound_effect_rules_value, selected_sfx, selected_sfx_terms_value
+                )
+                clip_video_file, clip_message_value, clip_srt_value = audio_clipper.video_clip(
+                    "", 0, 0, video_state_value,
+                    font_size=font_size_value,
+                    font_color=font_color_value,
+                    subtitle_x=subtitle_x_value,
+                    subtitle_y=subtitle_y_value,
+                    highlight_terms=highlight_terms_value,
+                    highlight_color=highlight_color_value,
+                    sound_effect_rules=sound_effect_rules_value,
+                    sound_effect_dir=LOCAL_SFX_DIR,
+                    dest_spk=None,
+                    output_dir=pipeline_dir,
+                    timestamp_list=timestamp_list,
+                    add_sub=True,
+                    subtitle_srt_text=canonical_srt,
+                )
+                clip_message_value = (
+                    _llm_clip_range_message(timestamp_list)
+                    + f"\nCanonical corrected SRT: {fingerprint}"
+                    + "\n"
+                    + clip_message_value
+                )
+                correction_status_value = (
+                    f"字幕修正完成：匹配 {matched_count}/{total_count} 条，"
+                    f"修改 {changed_count} 条，重建 {synced_count} 条。"
+                    f"统一字幕指纹：{fingerprint}。"
+                )
+                result = {
+                    "corrected_text": corrected_text,
+                    "corrected_srt": canonical_srt,
+                    "video_state": video_state_value,
+                    "corrected_srt_file": corrected_srt_path,
+                    "correction_status": correction_status_value,
+                    "llm_result": llm_result_value,
+                    "highlight_terms": highlight_terms_value,
+                    "video_output": clip_video_file,
+                    "clip_message": clip_message_value,
+                    "clip_srt": clip_srt_value,
+                }
+                _set_pipeline_task(
+                    job_id,
+                    status="done",
+                    step=5,
+                    message=(
+                        "All five steps completed. Steps 3-5 used canonical "
+                        f"corrected SRT {fingerprint}."
+                    ),
+                    result=result,
+                    finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+        except Exception as exc:
+            logging.exception("One-click pipeline failed: %s", job_id)
+            _set_pipeline_task(
+                job_id,
+                status="failed",
+                message=f"One-click pipeline failed: {exc}",
+                traceback=traceback.format_exc(),
+                finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+
+    def start_one_click_pipeline(
+            local_video, video_input, hotwords, output_dir,
+            correction_prompt, prompt_system, prompt_user, model, apikey,
+            highlight_prompt_value, highlight_count_value,
+            font_size_value, font_color_value, subtitle_x_value, subtitle_y_value,
+            highlight_color_value, sound_effect_rules_value, selected_sfx,
+            selected_sfx_terms_value):
+        if not local_video and video_input is None:
+            return (
+                "Please choose a server local video or upload a video first.",
+                "", "", None, None, None, "", "", "", None, "", "", "",
+            )
+        job_id = datetime.now().strftime("pipeline_%Y%m%d_%H%M%S_%f")
+        copied_video_input = _copy_video_input_for_background(video_input, job_id)
+        _set_pipeline_task(
+            job_id,
+            status="starting",
+            step=0,
+            message="Starting the five-step background pipeline.",
+            created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        thread = threading.Thread(
+            target=_run_one_click_pipeline,
+            args=(
+                job_id, local_video, copied_video_input, hotwords, output_dir,
+                correction_prompt, prompt_system, prompt_user, model, apikey,
+                highlight_prompt_value, highlight_count_value,
+                font_size_value, font_color_value, subtitle_x_value, subtitle_y_value,
+                highlight_color_value, sound_effect_rules_value, selected_sfx,
+                selected_sfx_terms_value,
+            ),
+            daemon=True,
+        )
+        thread.start()
+        return (
+            f"One-click task started. Job ID: {job_id}",
+            "", "", None, None, None, "", "", "", None, "", "", job_id,
+        )
+
+    def query_one_click_pipeline(job_id):
+        job_id = str(job_id or "").strip()
+        unchanged = (gr.update(),) * 11
+        if not job_id:
+            return (gr.update(),) + unchanged + (job_id,)
+        task = _get_pipeline_task(job_id)
+        if not task:
+            return (f"One-click task not found: {job_id}",) + unchanged + (job_id,)
+        status = task.get("status", "unknown")
+        message = task.get("message", "")
+        if status == "done" and task.get("result"):
+            result = task["result"]
+            return (
+                f"Done. Job ID: {job_id}\n{message}",
+                result["corrected_text"],
+                result["corrected_srt"],
+                result["video_state"],
+                None,
+                result["corrected_srt_file"],
+                result["correction_status"],
+                result["llm_result"],
+                result["highlight_terms"],
+                result["video_output"],
+                result["clip_message"],
+                result["clip_srt"],
+                job_id,
+            )
+        if status == "failed":
+            detail = str(task.get("traceback") or "")[-2000:]
+            return (
+                f"Failed. Job ID: {job_id}\n{message}\n{detail}",
+            ) + unchanged + (job_id,)
+        return (
+            f"{status.title()}. Job ID: {job_id}\n{message}",
+        ) + unchanged + (job_id,)
+
     def mix_clip(dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, sound_effect_rules, selected_sfx, selected_sfx_terms):
         output_dir = output_dir.strip()
         sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
