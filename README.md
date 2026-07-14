@@ -2,11 +2,11 @@
 
 简化网页入口，只有三个模块：
 
-* `字幕生成`：ASR 和 SRT 生成。
-* `字幕处理`：通过 DeepSeek 从 SRT 选择高光时间段。
-* `视频生成`：按照高光时间戳剪辑并烧录字幕。
+* `subtitle_generation`：ASR 和 SRT 生成。
+* `subtitle_processing`：通过 DeepSeek 从 SRT 选择高光时间段。
+* `video_generation`：按照高光时间戳剪辑并烧录字幕。
 
-把服务器上的待处理视频放入 `字幕生成/待处理视频/`。刷新网页后，可从“服务器待处理视频”下拉框直接选择；该选择优先于本地上传。
+把服务器上的待处理视频放入 `subtitle_generation/pending_videos/`。刷新网页后，可从“服务器待处理视频”下拉框直接选择；该选择优先于本地上传。
 
 仓库中的 `upstream_funclip` 是官方 `modelscope/FunClip` Git 子模块。首次部署后执行：
 
@@ -30,12 +30,14 @@ python prepare_funclip_runtime.py --replace
 Example:
 
 ```python
-from 字幕生成 import generate_subtitles
-from 字幕处理 import choose_highlights
-from 视频生成 import render_highlight_video
+from subtitle_generation import generate_subtitles
+from subtitle_processing import process_subtitles
+from video_generation import render_highlight_video
 
 text, srt, video_state, _, _, _ = generate_subtitles("input.mp4")
-llm_result = choose_highlights(srt, "api-key", "system prompt", "user prompt")
+corrected_srt, highlight_display, keywords, llm_result, video_state = process_subtitles(
+    srt, "api-key", 8, video_state
+)
 video, _, message, clip_srt = render_highlight_video(llm_result, video_state)
 ```
 

@@ -30,18 +30,12 @@ def patch_gradio_boolean_schema() -> None:
 
 patch_gradio_boolean_schema()
 
-from 字幕生成 import generate_subtitles
-from 字幕处理 import choose_highlights
-from 视频生成 import render_highlight_video
+from subtitle_generation import generate_subtitles
+from subtitle_processing import process_subtitles
+from video_generation import render_highlight_video
 
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are an expert short-form video editor. Select coherent, compelling "
-    "highlights from the supplied SRT. Return timestamp ranges in the exact "
-    "format [HH:MM:SS,mmm-HH:MM:SS,mmm]."
-)
-DEFAULT_USER_PROMPT = "Select the most engaging clips."
-VIDEO_LIBRARY_DIR = Path(__file__).resolve().parent / "字幕生成" / "待处理视频"
+VIDEO_LIBRARY_DIR = Path(__file__).resolve().parent / "subtitle_generation" / "pending_videos"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 
 
@@ -75,32 +69,32 @@ def generate(uploaded_video_path, library_video, hotwords):
     try:
         video_path = resolve_library_video(library_video) or uploaded_video_path
     except ValueError as exc:
-        return "字幕生成失败：{}".format(exc), None, "", None
+        return "字幕生成失败：{}".format(exc), None, "", "", "", None, None
     if not video_path:
-        return "请上传视频，或从服务器待处理视频中选择一个文件。", None, "", None
+        return "请上传视频，或从服务器待处理视频中选择一个文件。", None, "", "", "", None, None
     try:
         text, srt, video_state, _, _, _ = generate_subtitles(
             video_path, hotwords=hotwords or ""
         )
-        return srt, video_state, "", None
+        return srt, video_state, "", "", "", None, None
     except Exception as exc:
-        return "字幕生成失败：{}".format(exc), None, "", None
+        return "字幕生成失败：{}".format(exc), None, "", "", "", None, None
 
 
-def choose(srt_text, api_key):
+def process(srt_text, api_key, keyword_count, video_state):
     if not srt_text:
-        return "请先生成字幕。"
+        return "请先生成字幕。", "", "", None, video_state
     try:
         key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
-        return choose_highlights(
+        return process_subtitles(
             srt_text,
             key,
-            DEFAULT_SYSTEM_PROMPT,
-            DEFAULT_USER_PROMPT,
+            keyword_count,
+            video_state,
             model=os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-chat"),
         )
     except Exception as exc:
-        return "高光提取失败：{}".format(exc)
+        return "字幕处理失败：{}".format(exc), "", "", None, video_state
 
 
 def render(llm_result, video_state):
@@ -123,29 +117,41 @@ with gr.Blocks(title="FunClip 三模块") as app:
     hotwords_input = gr.Textbox(label="热词（可留空）", value="")
     api_key_input = gr.Textbox(label="DeepSeek API Key", type="password")
 
-    subtitle_output = gr.Textbox(label="字幕输出", lines=16)
-    highlight_output = gr.Textbox(label="高光输出", lines=12)
+    subtitle_output = gr.Textbox(label="字幕1：ASR 原始字幕", lines=12)
+    corrected_output = gr.Textbox(label="字幕2：DeepSeek 洗稿字幕", lines=12)
+    highlight_output = gr.Textbox(label="字幕3：高光时间戳与对应字幕", lines=12)
+    keyword_count_input = gr.Number(label="预期关键词数量", value=8, precision=0, minimum=1)
+    keyword_output = gr.Textbox(label="高光关键词", lines=6)
     video_output = gr.Video(label="视频输出")
     video_state = gr.State()
+    llm_result_state = gr.State()
 
     with gr.Row():
         subtitle_button = gr.Button("1. 生成字幕", variant="primary")
-        highlight_button = gr.Button("2. 选择高光")
+        highlight_button = gr.Button("2. 洗稿、提取高光与关键词")
         video_button = gr.Button("3. 生成视频")
 
     subtitle_button.click(
         generate,
         inputs=[video_input, library_video_input, hotwords_input],
-        outputs=[subtitle_output, video_state, highlight_output, video_output],
+        outputs=[
+            subtitle_output,
+            video_state,
+            corrected_output,
+            highlight_output,
+            keyword_output,
+            llm_result_state,
+            video_output,
+        ],
     )
     highlight_button.click(
-        choose,
-        inputs=[subtitle_output, api_key_input],
-        outputs=[highlight_output],
+        process,
+        inputs=[subtitle_output, api_key_input, keyword_count_input, video_state],
+        outputs=[corrected_output, highlight_output, keyword_output, llm_result_state, video_state],
     )
     video_button.click(
         render,
-        inputs=[highlight_output, video_state],
+        inputs=[llm_result_state, video_state],
         outputs=[video_output],
     )
     app.load(refresh_library_videos, outputs=[library_video_input])
