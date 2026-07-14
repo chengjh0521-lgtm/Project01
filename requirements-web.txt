@@ -1,4 +1,13 @@
 -r upstream_funclip/requirements.txt
 
-# Gradio 4.x imports HfFolder, which was removed in newer hub releases.
+# Keep Gradio 4.x on the web stack it was released against. Newer Starlette
+# changes the TemplateResponse call signature and newer Pydantic can emit a
+# boolean JSON schema that Gradio 4.44 cannot parse.
+gradio==4.44.1
+gradio_client==1.3.0
+fastapi==0.112.2
+starlette==0.38.6
+pydantic==2.10.6
+
+# Gradio 4.x imports HfFolder, which was removed in newer Hub releases.
 huggingface_hub==0.25.2
