@@ -8,6 +8,15 @@ from pathlib import Path
 import gradio as gr
 
 
+OUTPUT_VIDEO_CSS = """
+#generated-video { max-width: 640px; margin-left: auto; margin-right: auto; }
+#generated-video video { max-height: 360px; object-fit: contain; }
+@media (max-width: 640px) {
+  #generated-video video { max-height: 280px; }
+}
+"""
+
+
 def patch_gradio_boolean_schema() -> None:
     """Work around Gradio 4.x API-info generation for boolean JSON schemas."""
     try:
@@ -109,7 +118,7 @@ def render(llm_result, video_state):
         raise gr.Error("视频生成失败：{}".format(exc)) from exc
 
 
-with gr.Blocks(title="FunClip 三模块") as app:
+with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     video_input = gr.File(label="本地上传视频（可选）", file_types=["video"], type="filepath")
     library_video_input = gr.Dropdown(
         label="服务器待处理视频", choices=list_library_videos(), value=None
@@ -122,7 +131,7 @@ with gr.Blocks(title="FunClip 三模块") as app:
     highlight_output = gr.Textbox(label="字幕3：高光时间戳与对应字幕", lines=12)
     keyword_count_input = gr.Number(label="预期关键词数量", value=8, precision=0, minimum=1)
     keyword_output = gr.Textbox(label="高光关键词", lines=6)
-    video_output = gr.Video(label="视频输出")
+    video_output = gr.Video(label="视频输出", height=360, elem_id="generated-video")
     video_state = gr.State()
     llm_result_state = gr.State()
 
