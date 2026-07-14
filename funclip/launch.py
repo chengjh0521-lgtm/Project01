@@ -20,14 +20,15 @@ from utils.trans_utils import extract_timestamps
 from introduction import top_md_1, top_md_3, top_md_4
 
 
-if __name__ == "__main__":
+# external-import patch: processing callbacks are importable
+if True:
     parser = argparse.ArgumentParser(description='argparse testing')
     parser.add_argument('--lang', '-l', type=str, default = "zh", help="language")
     parser.add_argument('--model', '-m', type=str, default="paraformer", choices=["paraformer", "fun-asr-nano", "sensevoice"], help="ASR model: paraformer, fun-asr-nano, or sensevoice")
     parser.add_argument('--share', '-s', action='store_true', help="if to establish gradio share link")
     parser.add_argument('--port', '-p', type=int, default=7860, help='port number')
     parser.add_argument('--listen', action='store_true', help="if to listen to all hosts")
-    args = parser.parse_args()
+    args = (parser.parse_args() if __name__ == "__main__" else parser.parse_args([]))
     
     if args.lang == 'zh':
         if hasattr(args, 'model') and args.model == 'fun-asr-nano':
@@ -360,7 +361,8 @@ if __name__ == "__main__":
                            outputs=[video_output, audio_output, clip_message, srt_clipped])
     
     # start gradio service in local or share
-    if args.listen:
-        funclip_service.launch(share=args.share, server_port=args.port, server_name=server_name, inbrowser=False)
-    else:
-        funclip_service.launch(share=args.share, server_port=args.port, server_name=server_name)
+    if __name__ == "__main__":
+        if args.listen:
+            funclip_service.launch(share=args.share, server_port=args.port, server_name=server_name, inbrowser=False)
+        else:
+            funclip_service.launch(share=args.share, server_port=args.port, server_name=server_name)

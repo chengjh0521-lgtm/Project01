@@ -3,3 +3,4 @@
 ClipVideo/clipvideo/output
 **/__pycache__/
 *.spec
+funclip/launch.py.before-importable
