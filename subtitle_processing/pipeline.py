@@ -265,7 +265,7 @@ def _parse_correction_response(response: str, expected_ids: list[str]) -> list[s
     return corrected_texts
 
 
-def correct_srt(srt_text: str, api_key: str, model: str) -> str:
+def correct_srt(srt_text: str, api_key: str, model: str, status_callback=None) -> str:
     original = parse_srt(srt_text)
     total_batches = (len(original) + CORRECTION_BATCH_SIZE - 1) // CORRECTION_BATCH_SIZE
     for batch_number, start in enumerate(range(0, len(original), CORRECTION_BATCH_SIZE), start=1):
@@ -298,6 +298,12 @@ def correct_srt(srt_text: str, api_key: str, model: str) -> str:
             end,
             len(original) - end,
         )
+        if status_callback:
+            status_callback(
+                "阶段 1/3 洗稿：第 {}/{} 批，发送第 {}-{} 条字幕。".format(
+                    batch_number, total_batches, start + 1, end
+                )
+            )
         response = _call_deepseek(
             CORRECTION_SYSTEM_PROMPT,
             CORRECTION_USER_PROMPT,
@@ -318,6 +324,12 @@ def correct_srt(srt_text: str, api_key: str, model: str) -> str:
             end,
             len(original),
         )
+        if status_callback:
+            status_callback(
+                "阶段 1/3 洗稿：第 {}/{} 批完成，累计 {} / {} 条。".format(
+                    batch_number, total_batches, end, len(original)
+                )
+            )
     return render_srt(original)
 
 
@@ -401,7 +413,13 @@ def select_keywords(highlight_srt: str, api_key: str, model: str, keyword_count:
     return "\n".join(keywords[:keyword_count])
 
 
-def process_subtitles(srt_text: str, api_key: str, keyword_count: int, video_state=None, model: str | None = None):
+def process_subtitles(
+        srt_text: str,
+        api_key: str,
+        keyword_count: int,
+        video_state=None,
+        model: str | None = None,
+        status_callback=None):
     """Run correction, highlight extraction, and keyword selection sequentially."""
     selected_model = model or os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-chat")
     source_count = len(parse_srt(srt_text))
@@ -413,15 +431,21 @@ def process_subtitles(srt_text: str, api_key: str, keyword_count: int, video_sta
     )
 
     logging.warning("字幕处理阶段 1/3：正在调用 DeepSeek 洗稿。")
+    if status_callback:
+        status_callback("阶段 1/3：开始 DeepSeek 分批洗稿。")
     try:
-        corrected_srt = correct_srt(srt_text, api_key, selected_model)
+        corrected_srt = correct_srt(srt_text, api_key, selected_model, status_callback)
     except Exception as exc:
         logging.exception("字幕处理阶段 1/3：洗稿失败。")
         raise SubtitlePipelineError("阶段 1/3 洗稿失败：{}".format(exc)) from exc
     corrected_count = len(parse_srt(corrected_srt))
     logging.warning("字幕处理阶段 1/3：洗稿完成，字幕2=%d 条。", corrected_count)
+    if status_callback:
+        status_callback("阶段 1/3：洗稿完成，得到字幕2。")
 
     logging.warning("字幕处理阶段 2/3：正在调用 DeepSeek 提取高光片段。")
+    if status_callback:
+        status_callback("阶段 2/3：正在调用 DeepSeek 提取高光片段。")
     try:
         raw_highlights = _call_deepseek(
             HIGHLIGHT_SYSTEM_PROMPT,
@@ -441,16 +465,22 @@ def process_subtitles(srt_text: str, api_key: str, keyword_count: int, video_sta
         logging.exception("字幕处理阶段 2/3：高光提取失败。")
         raise SubtitlePipelineError("阶段 2/3 高光提取失败：{}".format(exc)) from exc
     logging.warning("字幕处理阶段 2/3：高光提取完成，识别到 %d 个时间段。", len(ranges))
+    if status_callback:
+        status_callback("阶段 2/3：高光提取完成，识别到 {} 个时间段。".format(len(ranges)))
     canonical_ranges = "\n".join("[{}-{}]".format(start, end) for start, end in ranges)
     highlight_srt = build_highlight_srt(corrected_srt, ranges)
 
     logging.warning("字幕处理阶段 3/3：正在调用 DeepSeek 提取关键词。")
+    if status_callback:
+        status_callback("阶段 3/3：正在调用 DeepSeek 提取关键词。")
     try:
         keywords = select_keywords(highlight_srt, api_key, selected_model, max(1, int(keyword_count)))
     except Exception as exc:
         logging.exception("字幕处理阶段 3/3：关键词提取失败。")
         raise SubtitlePipelineError("阶段 3/3 关键词提取失败：{}".format(exc)) from exc
     logging.warning("字幕处理阶段 3/3：关键词提取完成，返回 %d 个关键词。", len(keywords.splitlines()))
+    if status_callback:
+        status_callback("阶段 3/3：关键词提取完成，返回 {} 个关键词。".format(len(keywords.splitlines())))
     range_summary = "\n".join("[{}-{}]".format(start, end) for start, end in ranges)
     highlight_display = "高光时间戳：\n{}\n\n字幕3：\n{}".format(range_summary, highlight_srt)
     return (
