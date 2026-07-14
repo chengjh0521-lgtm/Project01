@@ -6,6 +6,29 @@ import os
 
 import gradio as gr
 
+
+def patch_gradio_boolean_schema() -> None:
+    """Work around Gradio 4.x API-info generation for boolean JSON schemas."""
+    try:
+        from gradio_client import utils as client_utils
+    except ImportError:
+        return
+
+    original = getattr(client_utils, "_json_schema_to_python_type", None)
+    if original is None or getattr(original, "_funclip_safe_boolean_schema", False):
+        return
+
+    def safe_json_schema_to_python_type(schema, defs=None):
+        if isinstance(schema, bool):
+            schema = {}
+        return original(schema, defs)
+
+    safe_json_schema_to_python_type._funclip_safe_boolean_schema = True
+    client_utils._json_schema_to_python_type = safe_json_schema_to_python_type
+
+
+patch_gradio_boolean_schema()
+
 from 字幕生成 import generate_subtitles
 from 字幕处理 import choose_highlights
 from 视频生成 import render_highlight_video
