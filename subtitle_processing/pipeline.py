@@ -6,9 +6,9 @@ import os
 import re
 import json
 import logging
-
-from funclip_loader import get_launch
-
+import time
+import urllib.error
+import urllib.request
 
 _SRT_TIME_RE = re.compile(
     r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
@@ -19,6 +19,12 @@ _RANGE_RE = re.compile(
     r"(?:-|–|—|-->)\s*(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*\]?"
 )
 _NUMBERED_LINE_RE = re.compile(r"^\s*(?:\d+\s*[.、)]\s*)?(?P<text>.+?)\s*$")
+
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+CORRECTION_BATCH_SIZE = 30
+CORRECTION_CONTEXT_SIZE = 15
+DEEPSEEK_TIMEOUT_SECONDS = 180
+DEEPSEEK_MAX_RETRIES = 6
 
 CORRECTION_SYSTEM_PROMPT = """
 你是一名资深中文医疗访谈 ASR 字幕校对员，熟悉临床医学术语、医生口语表达，以及四川话造成的同音、近音误识别。
@@ -135,6 +141,11 @@ def parse_srt(srt_text: str) -> list[dict[str, str]]:
             raise SubtitlePipelineError("存在没有文字内容的 SRT 条目。")
         cues.append(
             {
+                "header": (
+                    lines[time_index - 1].strip()
+                    if time_index > 0 and re.match(r"^\s*\d+(?:\s+.*)?$", lines[time_index - 1])
+                    else str(len(cues) + 1)
+                ),
                 "start": _normalize_timecode(match.group("start")),
                 "end": _normalize_timecode(match.group("end")),
                 "text": text,
@@ -145,7 +156,7 @@ def parse_srt(srt_text: str) -> list[dict[str, str]]:
 
 def render_srt(cues: list[dict[str, str]]) -> str:
     return "\n\n".join(
-        "{}\n{} --> {}\n{}".format(index, cue["start"], cue["end"], cue["text"])
+        "{}\n{} --> {}\n{}".format(cue.get("header", index), cue["start"], cue["end"], cue["text"])
         for index, cue in enumerate(cues, start=1)
     ) + "\n"
 
@@ -156,32 +167,75 @@ def _call_deepseek(
         content: str,
         api_key: str,
         model: str,
-        stage_label: str):
-    """Make one direct upstream DeepSeek request with correct message roles."""
+        stage_label: str,
+        json_response: bool = False):
+    """Make one direct DeepSeek API request with deterministic JSON support."""
     if not api_key:
         raise SubtitlePipelineError("请填写 DeepSeek API Key，或设置服务器的 DEEPSEEK_API_KEY。")
-    launch = get_launch()
     request_content = "{}\n\n{}".format(user_prompt, content)
+    request_body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": request_content},
+        ],
+        "temperature": 0,
+        "stream": False,
+    }
+    if json_response:
+        request_body["response_format"] = {"type": "json_object"}
+    encoded_body = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
     logging.warning(
-        "DeepSeek API %s：已发送，system=%d 字符，输入=%d 字符。",
+        "DeepSeek API %s：已发送，模型=%s，system=%d 字符，输入=%d 字符，JSON=%s。",
         stage_label,
+        model,
         len(system_prompt),
         len(content),
+        json_response,
     )
-    # upstream launch.llm_inference reverses system/user arguments internally.
-    # Call its imported openai_call directly so each stage uses the supplied
-    # system prompt as a system message and only this stage's payload as user input.
-    result = launch.openai_call(
-        api_key,
-        model=model,
-        user_content=request_content,
-        system_content=system_prompt,
-    )
-    result = str(result or "").strip()
-    logging.warning("DeepSeek API %s：已收到，返回=%d 字符。", stage_label, len(result))
-    if not result or result.lower().startswith("llm inference failed"):
-        raise SubtitlePipelineError(result or "DeepSeek 没有返回内容。")
-    return result
+    last_error = None
+    for attempt in range(DEEPSEEK_MAX_RETRIES + 1):
+        try:
+            request = urllib.request.Request(
+                DEEPSEEK_API_URL,
+                data=encoded_body,
+                method="POST",
+                headers={
+                    "Authorization": "Bearer {}".format(api_key),
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "FunClip-Module-Gateway/1.0",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=DEEPSEEK_TIMEOUT_SECONDS) as response:
+                api_response = json.loads(response.read().decode("utf-8"))
+            choices = api_response.get("choices")
+            if not isinstance(choices, list) or not choices:
+                raise ValueError("DeepSeek 返回中没有 choices。")
+            result = choices[0].get("message", {}).get("content")
+            if not isinstance(result, str) or not result.strip():
+                raise ValueError("DeepSeek 返回了空 message.content。")
+            result = result.strip()
+            logging.warning("DeepSeek API %s：已收到，返回=%d 字符。", stage_label, len(result))
+            return result
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            last_error = "HTTP {}: {}".format(exc.code, body or exc.reason)
+            if exc.code in (400, 401, 402, 403, 404, 422):
+                break
+        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            last_error = str(exc)
+        if attempt < DEEPSEEK_MAX_RETRIES:
+            wait_seconds = min(2 ** attempt * 2, 45)
+            logging.warning(
+                "DeepSeek API %s：第 %d 次失败：%s；%d 秒后重试。",
+                stage_label,
+                attempt + 1,
+                last_error,
+                wait_seconds,
+            )
+            time.sleep(wait_seconds)
+    raise SubtitlePipelineError("DeepSeek API {} 最终失败：{}".format(stage_label, last_error))
 
 
 def _parse_correction_response(response: str, expected_ids: list[str]) -> list[str]:
@@ -213,29 +267,57 @@ def _parse_correction_response(response: str, expected_ids: list[str]) -> list[s
 
 def correct_srt(srt_text: str, api_key: str, model: str) -> str:
     original = parse_srt(srt_text)
-    target_entries = [
-        {"id": str(index), "text": cue["text"]}
-        for index, cue in enumerate(original, start=1)
-    ]
-    request = {
-        "target_ids": [entry["id"] for entry in target_entries],
-        "target_entries": target_entries,
-        # The entire transcript is deliberately supplied once more as context.
-        # The model may use it for disambiguation but is forbidden to output it.
-        "context_entries": target_entries,
-    }
-    response = _call_deepseek(
-        CORRECTION_SYSTEM_PROMPT,
-        CORRECTION_USER_PROMPT,
-        json.dumps(request, ensure_ascii=False),
-        api_key,
-        model,
-        "阶段 1/3 洗稿",
-    )
-    corrected_texts = _parse_correction_response(response, request["target_ids"])
-    # LLM owns text only. The ASR time axis remains the sole video time source.
-    for cue, corrected_text in zip(original, corrected_texts):
-        cue["text"] = corrected_text
+    total_batches = (len(original) + CORRECTION_BATCH_SIZE - 1) // CORRECTION_BATCH_SIZE
+    for batch_number, start in enumerate(range(0, len(original), CORRECTION_BATCH_SIZE), start=1):
+        end = min(start + CORRECTION_BATCH_SIZE, len(original))
+        context_start = max(0, start - CORRECTION_CONTEXT_SIZE)
+        context_end = min(len(original), end + CORRECTION_CONTEXT_SIZE)
+        target_entries = [
+            {"id": str(index + 1), "text": original[index]["text"]}
+            for index in range(start, end)
+        ]
+        request = {
+            "instruction": "只校对 target_entries。context_entries 仅供理解语境。严格按 target_ids 的数量、ID 和顺序返回 JSON。",
+            "target_ids": [entry["id"] for entry in target_entries],
+            "context_entries": [
+                {
+                    "id": str(index + 1),
+                    "speaker": original[index].get("header", str(index + 1)),
+                    "text": original[index]["text"],
+                }
+                for index in range(context_start, context_end)
+            ],
+            "target_entries": target_entries,
+        }
+        logging.warning(
+            "字幕处理阶段 1/3：第 %d/%d 批发送 %d 条（%d-%d），剩余 %d 条未发送。",
+            batch_number,
+            total_batches,
+            end - start,
+            start + 1,
+            end,
+            len(original) - end,
+        )
+        response = _call_deepseek(
+            CORRECTION_SYSTEM_PROMPT,
+            CORRECTION_USER_PROMPT,
+            json.dumps(request, ensure_ascii=False),
+            api_key,
+            model,
+            "阶段 1/3 洗稿 第 {}/{} 批".format(batch_number, total_batches),
+            json_response=True,
+        )
+        corrected_texts = _parse_correction_response(response, request["target_ids"])
+        for cue, corrected_text in zip(original[start:end], corrected_texts):
+            cue["text"] = corrected_text
+        logging.warning(
+            "字幕处理阶段 1/3：第 %d/%d 批已收到 %d 条，累计完成 %d/%d 条。",
+            batch_number,
+            total_batches,
+            len(corrected_texts),
+            end,
+            len(original),
+        )
     return render_srt(original)
 
 

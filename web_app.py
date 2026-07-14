@@ -100,7 +100,7 @@ def process(srt_text, api_key, keyword_count, video_state):
             key,
             keyword_count,
             video_state,
-            model=os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-chat"),
+            model=os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-v4-flash"),
         )
     except Exception as exc:
         return "字幕处理失败：{}".format(exc), "", "", None, video_state
