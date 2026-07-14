@@ -1,0 +1,4 @@
+-r upstream_funclip/requirements.txt
+
+# Gradio 4.x imports HfFolder, which was removed in newer hub releases.
+huggingface_hub==0.25.2
