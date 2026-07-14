@@ -13,6 +13,7 @@ import shutil
 import tempfile
 import threading
 import traceback
+import uuid
 from datetime import datetime
 from urllib.parse import unquote, urlparse
 import gradio as gr
@@ -26,12 +27,18 @@ from llm.qwen_api import call_qwen_model
 from llm.g4f_openai_api import g4f_openai_call
 from llm.twelvelabs_api import call_twelvelabs_pegasus
 from utils.trans_utils import extract_timestamps, load_state, write_state
+from subtitle_replacement import (
+    SubtitleReplacementError,
+    apply_replacement,
+    restore_original_subtitles,
+)
 from introduction import top_md_1, top_md_3, top_md_4
 
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 LOCAL_TMP_DIR = os.path.join(PROJECT_ROOT, "tmp")
 ASR_TASK_DIR = os.path.join(LOCAL_TMP_DIR, "asr_jobs")
+SUBTITLE_REPLACEMENT_DIR = os.path.join(LOCAL_TMP_DIR, "subtitle_replacements")
 LOCAL_GRADIO_TMP_DIR = os.path.join(PROJECT_ROOT, "gradio_tmp")
 LOCAL_VIDEO_DIR = os.path.join(PROJECT_ROOT, "local_videos")
 LOCAL_SFX_DIR = os.path.abspath(
@@ -47,6 +54,7 @@ ASR_TASK_LOCK = threading.Lock()
 ASR_RUN_LOCK = threading.Lock()
 os.makedirs(LOCAL_TMP_DIR, exist_ok=True)
 os.makedirs(ASR_TASK_DIR, exist_ok=True)
+os.makedirs(SUBTITLE_REPLACEMENT_DIR, exist_ok=True)
 os.makedirs(LOCAL_GRADIO_TMP_DIR, exist_ok=True)
 os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
 os.makedirs(LOCAL_SFX_DIR, exist_ok=True)
@@ -706,12 +714,125 @@ if __name__ == "__main__":
         message = task.get("message", "")
         if status == "done":
             res_text, res_srt, video_state, audio_state, text_file, srt_file = task.get("result")
-            return f"Done. Job ID: {job_id}\n{message}", res_text, res_srt, video_state, audio_state, text_file, srt_file, job_id
+            # Do not let the background polling timer overwrite an uploaded
+            # replacement SRT after the completed ASR result is loaded once.
+            return f"Done. Job ID: {job_id}\n{message}", res_text, res_srt, video_state, audio_state, text_file, srt_file, ""
         if status == "failed":
             detail = task.get("traceback") or ""
             return f"Failed. Job ID: {job_id}\n{message}\n{detail[-2000:]}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
         return f"{status.title()}. Job ID: {job_id}\n{message}", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), job_id
     
+    def _read_uploaded_srt(path):
+        for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+            try:
+                with open(path, "r", encoding=encoding) as subtitle_file:
+                    return subtitle_file.read()
+            except UnicodeDecodeError:
+                continue
+        raise SubtitleReplacementError("The uploaded SRT file is not valid UTF-8 or GB18030 text.")
+
+    def _delete_replacement_file(path):
+        if not path:
+            return False
+        try:
+            absolute_path = os.path.abspath(path)
+            if os.path.commonpath([SUBTITLE_REPLACEMENT_DIR, absolute_path]) != SUBTITLE_REPLACEMENT_DIR:
+                logging.warning("Refusing to delete subtitle file outside replacement directory: %s", absolute_path)
+                return False
+            if os.path.isfile(absolute_path):
+                os.remove(absolute_path)
+                return True
+        except OSError:
+            logging.exception("Failed to delete replacement subtitle file: %s", path)
+        return False
+
+    def replace_uploaded_subtitles(uploaded_srt, current_srt, video_state, audio_state):
+        if not uploaded_srt or not os.path.isfile(uploaded_srt):
+            return (
+                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(), "Please upload a valid .srt file first."
+            )
+        if video_state is None and audio_state is None:
+            return (
+                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(), "Run ASR and load the media before replacing subtitles."
+            )
+
+        saved_path = os.path.join(
+            SUBTITLE_REPLACEMENT_DIR,
+            "replacement_{}_{}.srt".format(
+                datetime.now().strftime("%Y%m%d_%H%M%S"), uuid.uuid4().hex[:8]
+            ),
+        )
+        try:
+            shutil.copy2(uploaded_srt, saved_path)
+            replacement_srt = _read_uploaded_srt(saved_path)
+            if video_state is not None:
+                previous_path = video_state.get("subtitle_replacement_path")
+                updated_video_state, canonical_srt = apply_replacement(
+                    video_state, current_srt, replacement_srt, saved_path
+                )
+                updated_audio_state = audio_state
+            else:
+                previous_path = audio_state.get("subtitle_replacement_path")
+                updated_audio_state, canonical_srt = apply_replacement(
+                    audio_state, current_srt, replacement_srt, saved_path
+                )
+                updated_video_state = video_state
+            if previous_path and previous_path != saved_path:
+                _delete_replacement_file(previous_path)
+            replacement_text = "\n".join(
+                line for line in canonical_srt.splitlines()
+                if line and "-->" not in line and not line.strip().isdigit()
+            )
+            return (
+                canonical_srt,
+                replacement_text,
+                updated_video_state,
+                updated_audio_state,
+                saved_path,
+                gr.update(value=None),
+                "Replacement subtitles applied. All LLM, highlight, clip, and burned-caption actions now use this SRT.",
+            )
+        except Exception as exc:
+            _delete_replacement_file(saved_path)
+            logging.exception("Failed to replace subtitles.")
+            return (
+                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(), "Subtitle replacement failed: {}".format(exc)
+            )
+
+    def delete_replacement_subtitles(video_state, audio_state):
+        state = video_state if video_state is not None else audio_state
+        if not state or "_subtitle_replacement_backup" not in state:
+            return (
+                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(), "No replacement subtitle file is currently active."
+            )
+        replacement_path = state.get("subtitle_replacement_path")
+        if video_state is not None:
+            updated_video_state, original_srt = restore_original_subtitles(video_state)
+            updated_audio_state = audio_state
+        else:
+            updated_audio_state, original_srt = restore_original_subtitles(audio_state)
+            updated_video_state = video_state
+        deleted = _delete_replacement_file(replacement_path)
+        original_text = "\n".join(
+            line for line in original_srt.splitlines()
+            if line and "-->" not in line and not line.strip().isdigit()
+        )
+        return (
+            original_srt,
+            original_text,
+            updated_video_state,
+            updated_audio_state,
+            gr.update(value=None),
+            gr.update(value=None),
+            "Replacement subtitle file {}. Original ASR subtitles restored.".format(
+                "deleted" if deleted else "was already absent"
+            ),
+        )
+
     def mix_clip(dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir, sound_effect_rules, selected_sfx, selected_sfx_terms):
         output_dir = output_dir.strip()
         sound_effect_rules = _sync_sound_effect_binding(sound_effect_rules, selected_sfx, selected_sfx_terms)
@@ -965,6 +1086,22 @@ if __name__ == "__main__":
                 with gr.Row():
                     video_text_file = gr.File(label="⬇️ 下载识别结果 | Download Recognition Result", interactive=False)
                     video_srt_file = gr.File(label="⬇️ 下载SRT字幕 | Download SRT Subtitles", interactive=False)
+                with gr.Accordion("Replace Subtitles", open=False):
+                    subtitle_replacement_upload = gr.File(
+                        label="Upload Replacement SRT",
+                        file_types=[".srt"],
+                        type="filepath",
+                    )
+                    with gr.Row():
+                        apply_subtitle_replacement_button = gr.Button(
+                            "Apply Replacement SRT", variant="primary"
+                        )
+                        delete_subtitle_replacement_button = gr.Button(
+                            "Delete Replacement and Restore ASR"
+                        )
+                    subtitle_replacement_status = gr.Textbox(
+                        label="Subtitle Replacement Status", interactive=False
+                    )
             with gr.Column():
                 with gr.Tab("🧠 LLM智能裁剪 | LLM Clipping"):
                     with gr.Column():
@@ -1128,6 +1265,16 @@ if __name__ == "__main__":
                             query_asr_task,
                             inputs=[asr_job_id],
                             outputs=[asr_task_status, video_text_output, video_srt_output, video_state, audio_state, video_text_file, video_srt_file, asr_job_id])
+        apply_subtitle_replacement_button.click(
+                            replace_uploaded_subtitles,
+                            inputs=[subtitle_replacement_upload, video_srt_output, video_state, audio_state],
+                            outputs=[video_srt_output, video_text_output, video_state, audio_state,
+                                     video_srt_file, subtitle_replacement_upload, subtitle_replacement_status])
+        delete_subtitle_replacement_button.click(
+                            delete_replacement_subtitles,
+                            inputs=[video_state, audio_state],
+                            outputs=[video_srt_output, video_text_output, video_state, audio_state,
+                                     video_srt_file, subtitle_replacement_upload, subtitle_replacement_status])
         subtitle_preview_button.click(
                             preview_subtitle,
                             inputs=[local_video_input, video_input, subtitle_sample_text, font_size, font_color, subtitle_x, subtitle_y, highlight_terms, highlight_color],
