@@ -1,0 +1,4 @@
+[submodule "upstream_funclip"]
+	path = upstream_funclip
+	url = https://github.com/modelscope/FunClip.git
+	branch = main
