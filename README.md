@@ -11,7 +11,7 @@
 ```bash
 git submodule update --init --recursive
 python3 -m venv .venv
-.venv/bin/pip install --upgrade --force-reinstall -r requirements-web.txt
+.venv/bin/pip install -r requirements-web.txt
 python prepare_funclip_runtime.py
 ```
 
