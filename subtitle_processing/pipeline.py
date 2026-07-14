@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import json
+import logging
 
 from funclip_loader import get_launch
 
@@ -224,7 +225,7 @@ def extract_highlight_ranges(llm_result: str) -> list[tuple[str, str]]:
         seen.add((start, end))
         ranges.append((start, end))
     if not ranges:
-        raise SubtitlePipelineError("高光提取未返回可用时间戳。")
+        raise SubtitlePipelineError("高光提取未返回可用时间戳；请查看后端日志中的原始模型返回。")
     return ranges
 
 
@@ -275,6 +276,7 @@ def select_keywords(highlight_srt: str, api_key: str, model: str, keyword_count:
         "每行或每个逗号后只输出一个关键词，不得输出序号、解释、标点或其他文字。".format(keyword_count)
     )
     response = _call_deepseek(KEYWORD_SYSTEM_PROMPT, user_prompt, highlight_srt, api_key, model)
+    logging.warning("字幕处理阶段 3/3：关键词原始返回（%d 字符）：\n%s", len(response), response)
     keywords = []
     for part in re.split(r"[\n,，;；、]+", _strip_code_fence(response)):
         match = _NUMBERED_LINE_RE.match(part)
@@ -289,14 +291,48 @@ def select_keywords(highlight_srt: str, api_key: str, model: str, keyword_count:
 def process_subtitles(srt_text: str, api_key: str, keyword_count: int, video_state=None, model: str | None = None):
     """Run correction, highlight extraction, and keyword selection sequentially."""
     selected_model = model or os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-chat")
-    corrected_srt = correct_srt(srt_text, api_key, selected_model)
-    raw_highlights = _call_deepseek(
-        HIGHLIGHT_SYSTEM_PROMPT, HIGHLIGHT_USER_PROMPT, corrected_srt, api_key, selected_model
+    source_count = len(parse_srt(srt_text))
+    logging.warning(
+        "字幕处理开始：模型=%s，原始字幕=%d 条，关键词目标=%d 个。",
+        selected_model,
+        source_count,
+        keyword_count,
     )
-    ranges = extract_highlight_ranges(raw_highlights)
+
+    logging.warning("字幕处理阶段 1/3：正在调用 DeepSeek 洗稿。")
+    try:
+        corrected_srt = correct_srt(srt_text, api_key, selected_model)
+    except Exception as exc:
+        logging.exception("字幕处理阶段 1/3：洗稿失败。")
+        raise SubtitlePipelineError("阶段 1/3 洗稿失败：{}".format(exc)) from exc
+    corrected_count = len(parse_srt(corrected_srt))
+    logging.warning("字幕处理阶段 1/3：洗稿完成，字幕2=%d 条。", corrected_count)
+
+    logging.warning("字幕处理阶段 2/3：正在调用 DeepSeek 提取高光片段。")
+    try:
+        raw_highlights = _call_deepseek(
+            HIGHLIGHT_SYSTEM_PROMPT, HIGHLIGHT_USER_PROMPT, corrected_srt, api_key, selected_model
+        )
+        logging.warning(
+            "字幕处理阶段 2/3：高光原始返回（%d 字符）：\n%s",
+            len(raw_highlights),
+            raw_highlights,
+        )
+        ranges = extract_highlight_ranges(raw_highlights)
+    except Exception as exc:
+        logging.exception("字幕处理阶段 2/3：高光提取失败。")
+        raise SubtitlePipelineError("阶段 2/3 高光提取失败：{}".format(exc)) from exc
+    logging.warning("字幕处理阶段 2/3：高光提取完成，识别到 %d 个时间段。", len(ranges))
     canonical_ranges = "\n".join("[{}-{}]".format(start, end) for start, end in ranges)
     highlight_srt = build_highlight_srt(corrected_srt, ranges)
-    keywords = select_keywords(highlight_srt, api_key, selected_model, max(1, int(keyword_count)))
+
+    logging.warning("字幕处理阶段 3/3：正在调用 DeepSeek 提取关键词。")
+    try:
+        keywords = select_keywords(highlight_srt, api_key, selected_model, max(1, int(keyword_count)))
+    except Exception as exc:
+        logging.exception("字幕处理阶段 3/3：关键词提取失败。")
+        raise SubtitlePipelineError("阶段 3/3 关键词提取失败：{}".format(exc)) from exc
+    logging.warning("字幕处理阶段 3/3：关键词提取完成，返回 %d 个关键词。", len(keywords.splitlines()))
     range_summary = "\n".join("[{}-{}]".format(start, end) for start, end in ranges)
     highlight_display = "高光时间戳：\n{}\n\n字幕3：\n{}".format(range_summary, highlight_srt)
     return (
