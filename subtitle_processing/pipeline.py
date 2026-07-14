@@ -10,6 +10,8 @@ import time
 import urllib.error
 import urllib.request
 
+from subtitle_processing.local_correction_engine import correct_srt as correct_srt_like_local_script
+
 _SRT_TIME_RE = re.compile(
     r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*$"
@@ -331,6 +333,54 @@ def correct_srt(srt_text: str, api_key: str, model: str, status_callback=None) -
                 )
             )
     return render_srt(original)
+
+
+def correct_srt(srt_text: str, api_key: str, model: str, status_callback=None) -> str:
+    """Correct subtitles with the standalone script's parser and batch protocol."""
+    source_total = len(parse_srt(srt_text))
+
+    def call_api(payload: dict, batch_number: int, total_batches: int) -> str:
+        sent = len(payload["target_entries"])
+        remaining = max(0, source_total - batch_number * CORRECTION_BATCH_SIZE)
+        logging.warning(
+            "Stage 1/3 correction: batch %d/%d sent %d cues; %d cues remain.",
+            batch_number, total_batches, sent, remaining,
+        )
+        if status_callback:
+            status_callback(
+                "Stage 1/3 correction: batch {}/{}, sent {} cues; {} remain.".format(
+                    batch_number, total_batches, sent, remaining
+                )
+            )
+        return _call_deepseek(
+            CORRECTION_SYSTEM_PROMPT,
+            "Please correct the following JSON. Return only the required JSON object:",
+            json.dumps(payload, ensure_ascii=False),
+            api_key,
+            model,
+            "stage 1/3 correction batch {}/{}".format(batch_number, total_batches),
+            json_response=True,
+        )
+
+    def progress(batch_number: int, total_batches: int, completed: int, total: int) -> None:
+        logging.warning(
+            "Stage 1/3 correction: batch %d/%d received; %d/%d cues complete.",
+            batch_number, total_batches, completed, total,
+        )
+        if status_callback:
+            status_callback(
+                "Stage 1/3 correction: batch {}/{} received; {} / {} cues complete.".format(
+                    batch_number, total_batches, completed, total
+                )
+            )
+
+    return correct_srt_like_local_script(
+        srt_text,
+        call_api,
+        batch_size=CORRECTION_BATCH_SIZE,
+        context_size=CORRECTION_CONTEXT_SIZE,
+        progress=progress,
+    )
 
 
 def extract_highlight_ranges(llm_result: str) -> list[tuple[str, str]]:

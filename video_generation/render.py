@@ -56,6 +56,34 @@ def _parse_keywords(keywords: str | None) -> list[str]:
     return values
 
 
+def _caption_font_size(text: str) -> int:
+    longest_line = max((len(line) for line in text.split("\n")), default=0)
+    if longest_line > 30:
+        return 28
+    if longest_line > 24:
+        return 34
+    if longest_line > 20:
+        return 40
+    return 48
+
+
+def _wrap_caption_two_lines(text: str) -> str:
+    """Split a long cue into two balanced visual lines without changing timing."""
+    compact = "".join(part.strip() for part in text.splitlines())
+    if len(compact) <= 20:
+        return compact
+    midpoint = len(compact) // 2
+    candidates = [
+        index for index, char in enumerate(compact)
+        if char in "，。！？；：、,.!?;: " and 6 <= index <= len(compact) - 6
+    ]
+    if candidates:
+        split_at = min(candidates, key=lambda index: abs(index - midpoint)) + 1
+    else:
+        split_at = midpoint
+    return "{}\n{}".format(compact[:split_at].rstrip(), compact[split_at:].lstrip())
+
+
 def _highlight_ass_text(text: str, keywords: list[str]) -> str:
     escaped = (
         text.replace("\\", r"\\")
@@ -87,8 +115,11 @@ Style: Default,STHeiti,48,&H00FFFFFF,&H0000FFFF,&H00101010,&H80000000,0,0,0,0,10
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 """
     events = [
-        "Dialogue: 0,{},{},Default,,0,0,0,,{}".format(
-            _ass_timecode(start), _ass_timecode(end), _highlight_ass_text(text, keywords)
+        "Dialogue: 0,{},{},Default,,0,0,0,,{{\\fs{}}}{}".format(
+            _ass_timecode(start),
+            _ass_timecode(end),
+            _caption_font_size(_wrap_caption_two_lines(text)),
+            _highlight_ass_text(_wrap_caption_two_lines(text), keywords),
         )
         for start, end, text in cues
     ]
