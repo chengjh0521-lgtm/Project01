@@ -106,13 +106,13 @@ def process(srt_text, api_key, keyword_count, video_state):
         return "字幕处理失败：{}".format(exc), "", "", None, video_state
 
 
-def render(llm_result, video_state):
+def render(llm_result, video_state, keywords):
     if video_state is None:
         return None
     if not llm_result:
         return None
     try:
-        video, _, _, _ = render_highlight_video(llm_result, video_state)
+        video, _, _, _ = render_highlight_video(llm_result, video_state, keywords=keywords)
         return video
     except Exception as exc:
         raise gr.Error("视频生成失败：{}".format(exc)) from exc
@@ -160,7 +160,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     )
     video_button.click(
         render,
-        inputs=[llm_result_state, video_state],
+        inputs=[llm_result_state, video_state, keyword_output],
         outputs=[video_output],
     )
     app.load(refresh_library_videos, outputs=[library_video_input])
