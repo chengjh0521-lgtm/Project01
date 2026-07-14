@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import gradio as gr
 
@@ -40,11 +41,43 @@ DEFAULT_SYSTEM_PROMPT = (
     "format [HH:MM:SS,mmm-HH:MM:SS,mmm]."
 )
 DEFAULT_USER_PROMPT = "Select the most engaging clips."
+VIDEO_LIBRARY_DIR = Path(__file__).resolve().parent / "字幕生成" / "待处理视频"
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 
 
-def generate(video_path, hotwords):
+def list_library_videos():
+    """Return safe, readable paths relative to the server-side video library."""
+    VIDEO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+    return sorted(
+        str(path.relative_to(VIDEO_LIBRARY_DIR))
+        for path in VIDEO_LIBRARY_DIR.rglob("*")
+        if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+    )
+
+
+def refresh_library_videos():
+    return gr.Dropdown(choices=list_library_videos(), value=None)
+
+
+def resolve_library_video(selected_video):
+    if not selected_video:
+        return None
+    library_root = VIDEO_LIBRARY_DIR.resolve()
+    candidate = (library_root / selected_video).resolve()
+    if library_root not in candidate.parents or not candidate.is_file():
+        raise ValueError("所选服务器视频不存在或不在待处理视频目录内。")
+    if candidate.suffix.lower() not in VIDEO_EXTENSIONS:
+        raise ValueError("所选文件不是支持的视频格式。")
+    return str(candidate)
+
+
+def generate(uploaded_video_path, library_video, hotwords):
+    try:
+        video_path = resolve_library_video(library_video) or uploaded_video_path
+    except ValueError as exc:
+        return "字幕生成失败：{}".format(exc), None, "", None
     if not video_path:
-        return "请先上传视频。", None, "", None
+        return "请上传视频，或从服务器待处理视频中选择一个文件。", None, "", None
     try:
         text, srt, video_state, _, _, _ = generate_subtitles(
             video_path, hotwords=hotwords or ""
@@ -83,7 +116,10 @@ def render(llm_result, video_state):
 
 
 with gr.Blocks(title="FunClip 三模块") as app:
-    video_input = gr.File(label="视频", file_types=["video"], type="filepath")
+    video_input = gr.File(label="本地上传视频（可选）", file_types=["video"], type="filepath")
+    library_video_input = gr.Dropdown(
+        label="服务器待处理视频", choices=list_library_videos(), value=None
+    )
     hotwords_input = gr.Textbox(label="热词（可留空）", value="")
     api_key_input = gr.Textbox(label="DeepSeek API Key", type="password")
 
@@ -99,7 +135,7 @@ with gr.Blocks(title="FunClip 三模块") as app:
 
     subtitle_button.click(
         generate,
-        inputs=[video_input, hotwords_input],
+        inputs=[video_input, library_video_input, hotwords_input],
         outputs=[subtitle_output, video_state, highlight_output, video_output],
     )
     highlight_button.click(
@@ -112,6 +148,7 @@ with gr.Blocks(title="FunClip 三模块") as app:
         inputs=[highlight_output, video_state],
         outputs=[video_output],
     )
+    app.load(refresh_library_videos, outputs=[library_video_input])
 
 
 if __name__ == "__main__":
