@@ -150,12 +150,35 @@ def render_srt(cues: list[dict[str, str]]) -> str:
     ) + "\n"
 
 
-def _call_deepseek(system_prompt: str, user_prompt: str, content: str, api_key: str, model: str) -> str:
+def _call_deepseek(
+        system_prompt: str,
+        user_prompt: str,
+        content: str,
+        api_key: str,
+        model: str,
+        stage_label: str):
+    """Make one direct upstream DeepSeek request with correct message roles."""
     if not api_key:
         raise SubtitlePipelineError("请填写 DeepSeek API Key，或设置服务器的 DEEPSEEK_API_KEY。")
     launch = get_launch()
-    result = launch.llm_inference(system_prompt, user_prompt, content, model, api_key)
+    request_content = "{}\n\n{}".format(user_prompt, content)
+    logging.warning(
+        "DeepSeek API %s：已发送，system=%d 字符，输入=%d 字符。",
+        stage_label,
+        len(system_prompt),
+        len(content),
+    )
+    # upstream launch.llm_inference reverses system/user arguments internally.
+    # Call its imported openai_call directly so each stage uses the supplied
+    # system prompt as a system message and only this stage's payload as user input.
+    result = launch.openai_call(
+        api_key,
+        model=model,
+        user_content=request_content,
+        system_content=system_prompt,
+    )
     result = str(result or "").strip()
+    logging.warning("DeepSeek API %s：已收到，返回=%d 字符。", stage_label, len(result))
     if not result or result.lower().startswith("llm inference failed"):
         raise SubtitlePipelineError(result or "DeepSeek 没有返回内容。")
     return result
@@ -207,6 +230,7 @@ def correct_srt(srt_text: str, api_key: str, model: str) -> str:
         json.dumps(request, ensure_ascii=False),
         api_key,
         model,
+        "阶段 1/3 洗稿",
     )
     corrected_texts = _parse_correction_response(response, request["target_ids"])
     # LLM owns text only. The ASR time axis remains the sole video time source.
@@ -275,7 +299,14 @@ def select_keywords(highlight_srt: str, api_key: str, model: str, keyword_count:
         "以下是高光字幕。请按系统要求选择不超过 {} 个高价值关键词或短语。"
         "每行或每个逗号后只输出一个关键词，不得输出序号、解释、标点或其他文字。".format(keyword_count)
     )
-    response = _call_deepseek(KEYWORD_SYSTEM_PROMPT, user_prompt, highlight_srt, api_key, model)
+    response = _call_deepseek(
+        KEYWORD_SYSTEM_PROMPT,
+        user_prompt,
+        highlight_srt,
+        api_key,
+        model,
+        "阶段 3/3 关键词",
+    )
     logging.warning("字幕处理阶段 3/3：关键词原始返回（%d 字符）：\n%s", len(response), response)
     keywords = []
     for part in re.split(r"[\n,，;；、]+", _strip_code_fence(response)):
@@ -311,7 +342,12 @@ def process_subtitles(srt_text: str, api_key: str, keyword_count: int, video_sta
     logging.warning("字幕处理阶段 2/3：正在调用 DeepSeek 提取高光片段。")
     try:
         raw_highlights = _call_deepseek(
-            HIGHLIGHT_SYSTEM_PROMPT, HIGHLIGHT_USER_PROMPT, corrected_srt, api_key, selected_model
+            HIGHLIGHT_SYSTEM_PROMPT,
+            HIGHLIGHT_USER_PROMPT,
+            corrected_srt,
+            api_key,
+            selected_model,
+            "阶段 2/3 高光",
         )
         logging.warning(
             "字幕处理阶段 2/3：高光原始返回（%d 字符）：\n%s",
