@@ -11,3 +11,6 @@ pydantic==2.10.6
 
 # Gradio 4.x imports HfFolder, which was removed in newer Hub releases.
 huggingface_hub==0.25.2
+
+# FunClip's audio stack uses numba, whose supported NumPy range excludes 2.5.
+numpy==1.26.4
