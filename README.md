@@ -19,6 +19,7 @@ python prepare_funclip_runtime.py
 
 该脚本将上游的 `funclip` 和 `font` 复制到被忽略的 `runtime/` 目录，保留一份
 `launch.py.before-importable`，再把复制后的 `runtime/funclip/launch.py` 改成可导入形式。
+导入该副本时只会初始化处理方法，不会构建官方 Gradio 页面。
 官方子模块不会被修改；上游更新后，停止服务并运行：
 
 ```bash

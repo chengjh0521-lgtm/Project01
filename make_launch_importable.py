@@ -20,13 +20,10 @@ def transform_source(source: str) -> tuple[str, bool]:
         r'^if __name__ == ["\']__main__["\']:\s*$', line.strip())), None)
     parse_args = next((i for i, line in enumerate(lines) if re.match(
         r'^\s*args = parser\.parse_args\(\)\s*$', line)), None)
-    launches = [i for i, line in enumerate(lines) if "funclip_service.launch(" in line]
-    if outer is None or parse_args is None or not launches:
+    ui_start = next((i for i, line in enumerate(lines) if re.match(
+        r'^\s*# gradio interface\s*$', line)), None)
+    if outer is None or parse_args is None or ui_start is None:
         raise RuntimeError("Unsupported launch.py structure; update this patch script first.")
-    footer = next((i for i in range(launches[-1], -1, -1) if re.match(
-        r'^\s*if args\.listen:\s*$', lines[i])), None)
-    if footer is None:
-        raise RuntimeError("Could not find the final Gradio launch block.")
 
     outer_indent = lines[outer][:-len(lines[outer].lstrip())]
     lines[outer] = f"{outer_indent}{MARKER}\n{outer_indent}if True:\n"
@@ -35,9 +32,12 @@ def transform_source(source: str) -> tuple[str, bool]:
         f'{parse_indent}args = (parser.parse_args() if __name__ == "__main__" '
         f"else parser.parse_args([]))\n"
     )
-    footer_indent = lines[footer][:-len(lines[footer].lstrip())]
-    lines.insert(footer, f'{footer_indent}if __name__ == "__main__":\n')
-    for i in range(footer + 1, len(lines)):
+    # The callback functions above this line stay importable.  The upstream
+    # Blocks UI is only needed when launch.py is executed as a program; building
+    # it during an import triggers component-version failures and wastes memory.
+    ui_indent = lines[ui_start][:-len(lines[ui_start].lstrip())]
+    lines.insert(ui_start, f'{ui_indent}if __name__ == "__main__":\n')
+    for i in range(ui_start + 1, len(lines)):
         if lines[i].strip():
             lines[i] = "    " + lines[i]
     return "".join(lines), True
