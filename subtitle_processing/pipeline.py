@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 
 from funclip_loader import get_launch
 
@@ -18,18 +19,72 @@ _RANGE_RE = re.compile(
 )
 _NUMBERED_LINE_RE = re.compile(r"^\s*(?:\d+\s*[.、)]\s*)?(?P<text>.+?)\s*$")
 
-CORRECTION_SYSTEM_PROMPT = """你是一名医疗视频字幕校对员，熟悉医生口语、医学术语和四川话常见同音误识别。
-结合相邻字幕修正可明确判断的同音字、错别字、漏字、标点和医学术语。保留原意、语气和表达顺序；
-不总结、不扩写、不删除内容，不改动任何字幕的数量、序号和时间轴。"""
-CORRECTION_USER_PROMPT = """以下是 SRT 字幕。请逐条校对，严格输出完整 SRT：每条均为“序号 + 时间轴 + 修正后的文本”，
-时间轴与条目数量必须和输入完全一致。除 SRT 内容外不要输出标题、解释、分析、Markdown 或代码块。"""
-HIGHLIGHT_SYSTEM_PROMPT = """你是一名中文医疗短视频剪辑师。根据给定的校对后 SRT，选择主题完整、有信息价值且吸引人的高光片段。
-避免只截取半句话；优先保留医生的结论、反差、类比、提醒和情绪转折。"""
-HIGHLIGHT_USER_PROMPT = """从以下 SRT 中选择高光片段。每行只输出一个时间范围，格式必须严格为：
-[HH:MM:SS,mmm-HH:MM:SS,mmm]
-不要输出任何文字说明、编号、破折号、分析或总结。"""
-KEYWORD_SYSTEM_PROMPT = """你负责为医疗短视频识别适合字幕强调的关键词或短语。关键词必须来自输入字幕，
-优先选择疾病、指标、风险、结论、药物、剂量或有传播力的短语。"""
+CORRECTION_SYSTEM_PROMPT = """
+你是一名资深中文医疗访谈 ASR 字幕校对员，熟悉临床医学术语、医生口语表达，以及四川话造成的同音、近音误识别。
+
+输入来自自动语音识别，默认可能存在错误。你必须逐条、逐字检查 target_entries，并结合 context_entries 的前后文主动发现错误。
+
+必须严格遵守：
+1. 只校对 target_entries 中的字幕正文。
+2. 不得修改、合并、删除、新增或重新排序任何字幕条目。
+3. 每个目标条目的 id 必须原样返回，返回数量和顺序必须与 target_ids 完全一致。
+4. context_entries 仅用于理解上下文，不得出现在输出中。
+5. 优先修正可由语境或医学常识明确判断的同音字、近音字、错别字、四川话及其他口音造成的误识别、漏字、多字、重复识别、明显错误的断句或标点、医学术语、疾病名称、药物名称、检查项目、治疗方式、解剖部位、剂量、数值、百分比、时间和单位。
+6. 不要因为整句话表面通顺就默认正确；对疑似词必须结合医学语境重新判断。
+7. 能够明确判断的错误应直接修正，不能因为过度保守而保留明显错误。
+8. 确实无法根据上下文确定时，保留原文，不得臆造。
+9. 只做校对，不做改写：保留原有表达顺序、医生和患者的口语风格、原本的重复、停顿词和语气；不总结、不扩写、不解释、不润色成书面语、不擅自改变医学观点。
+10. text 中只能包含校对后的字幕正文，不得包含时间戳、字幕编号、spk0、spk1 等说话人标签、Markdown、批注、解释或修改说明。
+11. 原文没有错误时，必须原样返回，不要为了显示修改而改变文字。
+
+只返回一个合法 JSON 对象，格式必须为：
+{
+  "entries": [
+    {"id": "1", "text": "校对后的字幕正文"},
+    {"id": "2", "text": "校对后的字幕正文"}
+  ]
+}
+""".strip()
+CORRECTION_USER_PROMPT = "输入 JSON 中的 target_entries 是待校对字幕，context_entries 是完整上下文。请严格按系统要求返回 JSON。"
+KEYWORD_SYSTEM_PROMPT = """
+你是一个短视频字幕高亮分析器。
+
+输入是一段已经筛选好的视频字幕，这段字幕本身已经具有完整的知识价值。你的任务是从字幕中挑选最值得在视频中进行视觉强调（高亮、变色、放大、音效）的关键词。
+
+请遵循以下规则：
+1. 只选择真正影响观众理解或传播效果的关键词，不要为了数量而选择。
+2. 优先选择疾病名称、症状、药物名称、检查项目、治疗方式、生活习惯、行为动作、风险因素、医学结论、否定词、数字、百分比、时间、剂量、身体部位。例如：糖尿病、高血压、痛风、脂肪肝、抽烟、吸烟、喝酒、饮酒、熬夜、减肥、运动、吃药、胰岛素、二甲双胍、头晕、胸痛、失眠、血糖、血压、CT、核磁、7%、120、3个月、每天两次、不能、必须、一定、千万不要、建议、禁止、可以、不可以、需要、推荐、不推荐。
+3. 不要选择助词、连词、语气词、人称代词、医生、患者等无实际传播价值的词，或重复出现且没有强调意义的普通词汇。
+4. 输出的关键词必须完全出现在输入字幕中，不允许修改文字，不允许生成同义词。
+5. 每个关键词长度一般控制在 1~6 个汉字。
+6. 每段字幕最多输出 8 个关键词，宁缺毋滥。
+将每个关键词以逗号或者换行隔开，除关键词外不要输出其他内容。
+""".strip()
+HIGHLIGHT_SYSTEM_PROMPT = """
+你是一个专业的医学科普视频剪辑分析器。
+
+输入为一份完整的视频 SRT 字幕，内容为医患之间的真实对话，其中包含大量寒暄、重复表达、病史询问、无意义停顿、情绪交流等无关内容。
+
+你的任务是从整份字幕中提炼出适合制作短视频的医学知识片段。主角（医生）所说的语言是四川话，可能被 ASR 错误识别为其他内容；你需要联系上下文，尽量还原医生本意，适当理解字幕中的错误翻译。
+
+要求如下：
+1. 以知识点为核心，而不是按视频顺序。自动识别具有独立知识价值的医学科普主题。
+2. 允许跨时间段组合。可以从视频不同位置提取同一知识点，不要求保持视频原始出现顺序，应按照最容易理解、逻辑最完整的顺序重新组织。
+3. 删除所有无关内容，包括问候语、病史确认、患者重复提问、医生口头禅、重复解释、闲聊、无意义停顿和情绪表达。
+4. 每个输出片段必须围绕一个完整主题，不要混杂多个主题。
+5. 每个输出片段总时长保持在 40~90 秒；不足 40 秒可补充同主题内容，超过 90 秒保留最重要内容。
+6. 输出组成片段的所有连续字幕段；连续字幕合并为一条 [开始时间-结束时间] 文本；不连续位置分别输出，并保持重组后的知识逻辑顺序。
+7. 优先选择结论明确、通俗易懂、医学知识完整、对普通观众有价值且适合短视频传播的内容。
+8. 最多输出 1 个知识主题，且优先选择与烟酒有关的主题。
+
+输出格式严格如下：
+1. [开始时间-结束时间] 文本
+2. [开始时间-结束时间] 文本
+3. [开始时间-结束时间] 文本
+
+除上述内容外，不输出任何解释、分析、总结或额外文字。
+""".strip()
+HIGHLIGHT_USER_PROMPT = "以下是完整的校对后 SRT 字幕，请按系统要求提取高光。"
 
 
 class SubtitlePipelineError(ValueError):
@@ -105,27 +160,54 @@ def _call_deepseek(system_prompt: str, user_prompt: str, content: str, api_key: 
     return result
 
 
+def _parse_correction_response(response: str, expected_ids: list[str]) -> list[str]:
+    text = _strip_code_fence(response)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        decoder = json.JSONDecoder()
+        start = text.find("{")
+        if start < 0:
+            raise SubtitlePipelineError("字幕洗稿未返回合法 JSON。")
+        try:
+            payload, _ = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError as exc:
+            raise SubtitlePipelineError("字幕洗稿未返回合法 JSON。") from exc
+    entries = payload.get("entries") if isinstance(payload, dict) else None
+    if not isinstance(entries, list) or len(entries) != len(expected_ids):
+        raise SubtitlePipelineError("字幕洗稿返回的 entries 数量与原字幕不一致。")
+    corrected_texts = []
+    for expected_id, entry in zip(expected_ids, entries):
+        if not isinstance(entry, dict) or str(entry.get("id")) != expected_id:
+            raise SubtitlePipelineError("字幕洗稿返回的 id 与原字幕顺序不一致。")
+        text_value = entry.get("text")
+        if not isinstance(text_value, str) or not text_value.strip():
+            raise SubtitlePipelineError("字幕洗稿返回了空字幕正文。")
+        corrected_texts.append(text_value.strip())
+    return corrected_texts
+
+
 def correct_srt(srt_text: str, api_key: str, model: str) -> str:
     original = parse_srt(srt_text)
-    response = _call_deepseek(CORRECTION_SYSTEM_PROMPT, CORRECTION_USER_PROMPT, srt_text, api_key, model)
-    try:
-        corrected = parse_srt(response)
-        corrected_texts = [cue["text"] for cue in corrected]
-    except SubtitlePipelineError:
-        corrected_texts = []
-        for line in _strip_code_fence(response).splitlines():
-            match = _NUMBERED_LINE_RE.match(line)
-            if not match:
-                continue
-            text = _RANGE_RE.sub("", match.group("text"), count=1).strip()
-            if text:
-                corrected_texts.append(text)
-    if len(corrected_texts) != len(original):
-        raise SubtitlePipelineError(
-            "字幕洗稿返回 {} 条，原字幕为 {} 条；为保证时间轴准确，未使用该结果。".format(
-                len(corrected_texts), len(original)
-            )
-        )
+    target_entries = [
+        {"id": str(index), "text": cue["text"]}
+        for index, cue in enumerate(original, start=1)
+    ]
+    request = {
+        "target_ids": [entry["id"] for entry in target_entries],
+        "target_entries": target_entries,
+        # The entire transcript is deliberately supplied once more as context.
+        # The model may use it for disambiguation but is forbidden to output it.
+        "context_entries": target_entries,
+    }
+    response = _call_deepseek(
+        CORRECTION_SYSTEM_PROMPT,
+        CORRECTION_USER_PROMPT,
+        json.dumps(request, ensure_ascii=False),
+        api_key,
+        model,
+    )
+    corrected_texts = _parse_correction_response(response, request["target_ids"])
     # LLM owns text only. The ASR time axis remains the sole video time source.
     for cue, corrected_text in zip(original, corrected_texts):
         cue["text"] = corrected_text
@@ -189,8 +271,8 @@ def build_corrected_video_state(video_state, corrected_srt: str):
 
 def select_keywords(highlight_srt: str, api_key: str, model: str, keyword_count: int) -> str:
     user_prompt = (
-        "从以下高光字幕中选择恰好 {} 个关键词或短语。每行只输出一个关键词或短语，"
-        "不得输出序号、解释、标点或其他文字。".format(keyword_count)
+        "以下是高光字幕。请按系统要求选择不超过 {} 个高价值关键词或短语。"
+        "每行或每个逗号后只输出一个关键词，不得输出序号、解释、标点或其他文字。".format(keyword_count)
     )
     response = _call_deepseek(KEYWORD_SYSTEM_PROMPT, user_prompt, highlight_srt, api_key, model)
     keywords = []
