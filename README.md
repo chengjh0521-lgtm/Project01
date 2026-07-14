@@ -6,6 +6,9 @@
 * `subtitle_processing`：通过 DeepSeek 从 SRT 选择高光时间段。
 * `video_generation`：按照高光时间戳剪辑并烧录字幕。
 
+服务器可在项目根目录创建未被 Git 跟踪的 `.env` 文件，保存 `DEEPSEEK_API_KEY` 和
+`FUNCLIP_LLM_MODEL`。启动脚本会自动加载它，网页中的 API Key 可留空。
+
 把服务器上的待处理视频放入 `subtitle_generation/pending_videos/`。刷新网页后，可从“服务器待处理视频”下拉框直接选择；该选择优先于本地上传。
 
 仓库中的 `upstream_funclip` 是官方 `modelscope/FunClip` Git 子模块。首次部署后执行：
