@@ -106,7 +106,8 @@ def save_user_settings(settings):
         os.chmod(USER_SETTINGS_PATH, 0o600)
 
 
-if __name__ == "__main__":
+# external-import patch: processing callbacks are importable
+if True:
     parser = argparse.ArgumentParser(description='argparse testing')
     parser.add_argument('--lang', '-l', type=str, default = "zh", help="language")
     parser.add_argument('--model', '-m', type=str, default="paraformer", choices=["paraformer", "fun-asr-nano", "sensevoice"], help="ASR model: paraformer, fun-asr-nano, or sensevoice")
@@ -114,7 +115,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', '-p', type=int, default=7860, help='port number')
     parser.add_argument('--listen', action='store_true', help="if to listen to all hosts")
     parser.add_argument('--with-examples', action='store_true', help="load remote demo examples")
-    args = parser.parse_args()
+    args = (parser.parse_args() if __name__ == "__main__" else parser.parse_args([]))
     if not args.with_examples:
         gr.Examples = lambda *example_args, **example_kwargs: None
     
@@ -1352,7 +1353,8 @@ if __name__ == "__main__":
                            outputs=[video_output, audio_output, clip_message, srt_clipped])
     
     # start gradio service in local or share
-    if args.listen:
-        funclip_service.launch(share=args.share, server_port=args.port, server_name=server_name, inbrowser=False)
-    else:
-        funclip_service.launch(share=args.share, server_port=args.port, server_name=server_name)
+    if __name__ == "__main__":
+        if args.listen:
+            funclip_service.launch(share=args.share, server_port=args.port, server_name=server_name, inbrowser=False)
+        else:
+            funclip_service.launch(share=args.share, server_port=args.port, server_name=server_name)

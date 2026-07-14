@@ -15,3 +15,4 @@ local_sfx/*
 !local_sfx/.gitkeep
 *.log
 funclip-server.*.log
+funclip/launch.py.before-importable
