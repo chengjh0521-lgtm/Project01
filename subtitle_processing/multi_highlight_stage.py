@@ -9,7 +9,7 @@ from typing import Callable
 
 
 TIME_RE = re.compile(
-    r"\[?\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*(?:-|-->|~)\s*"
+    r"\[?\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*(?:-|-->|~|\u2013|\u2014)\s*"
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*\]?"
 )
 
@@ -36,10 +36,28 @@ def _ms(value: str) -> int:
     return int(h) * 3_600_000 + int(m) * 60_000 + int(s) * 1000 + int(ms)
 
 
+def _load_json_object(text: str) -> dict | None:
+    """Accept a JSON object even when a provider wraps it in a code fence."""
+    value = text.strip()
+    if value.startswith("```"):
+        value = re.sub(r"^```(?:json)?\s*|\s*```$", "", value, flags=re.IGNORECASE)
+    decoder = json.JSONDecoder()
+    for offset, char in enumerate(value):
+        if char != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(value[offset:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
 def parse_ranges(text: str) -> list[tuple[str, str]]:
     seen, values = set(), []
     try:
-        payload = json.loads(text.strip())
+        payload = _load_json_object(text)
         items = payload.get("ranges", []) if isinstance(payload, dict) else []
         for item in items:
             if not isinstance(item, dict):
@@ -50,7 +68,7 @@ def parse_ranges(text: str) -> list[tuple[str, str]]:
                 seen.add((start, end))
         if values or isinstance(payload, dict):
             return values
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
         pass
     for match in TIME_RE.finditer(text):
         start, end = _normalize(match.group("start")), _normalize(match.group("end"))
@@ -94,7 +112,7 @@ def select_multiple(
         user_prompt = (
             "完整素材如下：\n{}\n\n已选素材如下：\n{}\n\n"
             "请提取一个新的主题或不同角度。新素材与所有已选素材的重合时长不得超过新素材总时长的 30%。"
-            "如果无法提取合规的新素材，只输出 NONE。"
+            "如果无法提取合规的新素材，返回 {{\"ranges\":[]}}。"
         ).format(corrected_srt, previous)
         if report:
             report("阶段 2/4：正在提取第 {} 条低重合高光候选。".format(number))
