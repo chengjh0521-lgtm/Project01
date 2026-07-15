@@ -83,9 +83,9 @@ def submit_generate(uploaded_video_path, library_video, hotwords):
     try:
         video_path = resolve_library_video(library_video) or uploaded_video_path
     except ValueError as exc:
-        return ("字幕生成任务未提交：{}".format(exc), *_skipped_outputs(7), None)
+        return ("字幕生成任务未提交：{}".format(exc), *_skipped_outputs(7), "", None)
     if not video_path:
-        return ("请上传视频，或从服务器待处理视频中选择一个文件。", *_skipped_outputs(7), None)
+        return ("请上传视频，或从服务器待处理视频中选择一个文件。", *_skipped_outputs(7), "", None)
 
     def worker(report):
         report("阶段 1/1：正在进行 ASR 字幕识别。")
@@ -96,12 +96,12 @@ def submit_generate(uploaded_video_path, library_video, hotwords):
         return {"subtitle": srt, "video_state": video_state}
 
     job_id = JOBS.submit("asr", worker)
-    return ("字幕生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(7), {"id": job_id})
+    return ("字幕生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(7), job_id, {"id": job_id})
 
 
 def submit_process(srt_text, api_key, keyword_count, video_state):
     if not srt_text:
-        return ("请先生成字幕。", *_skipped_outputs(7), None)
+        return ("请先生成字幕。", *_skipped_outputs(7), "", None)
     key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
 
     def worker(report):
@@ -115,14 +115,14 @@ def submit_process(srt_text, api_key, keyword_count, video_state):
         )
 
     job_id = JOBS.submit("process", worker)
-    return ("字幕处理已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(7), {"id": job_id})
+    return ("字幕处理已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(7), job_id, {"id": job_id})
 
 
 def submit_render(llm_result, video_state, keywords):
     if video_state is None:
-        return ("请先完成字幕生成和第二步处理。", *_skipped_outputs(7), None)
+        return ("请先完成字幕生成和第二步处理。", *_skipped_outputs(7), "", None)
     if not llm_result:
-        return ("请先完成第二步高光提取。", *_skipped_outputs(7), None)
+        return ("请先完成第二步高光提取。", *_skipped_outputs(7), "", None)
 
     def worker(report):
         report("阶段 1/1：正在剪辑视频并烧录字幕。")
@@ -131,20 +131,20 @@ def submit_render(llm_result, video_state, keywords):
         return {"video": video}
 
     job_id = JOBS.submit("render", worker)
-    return ("视频生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(7), {"id": job_id})
+    return ("视频生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(7), job_id, {"id": job_id})
 
 
 def poll_job(job_ref):
     job_id = job_ref.get("id") if isinstance(job_ref, dict) else None
     job = JOBS.get(job_id)
     if job is None:
-        return (gr.skip(), *_skipped_outputs(7), None)
+        return ("后台任务不存在，可能服务刚刚重启。", *_skipped_outputs(7), "", None)
     status = job["status"]
     prefix = "后台任务 {}：".format(job["kind"])
     if status in {"queued", "running"}:
-        return (prefix + job["message"], *_skipped_outputs(7), job_ref)
+        return (prefix + job["message"], *_skipped_outputs(7), job_id, job_ref)
     if status == "failed":
-        return (prefix + "失败：{}".format(job["error"] or job["message"]), *_skipped_outputs(7), None)
+        return (prefix + "失败：{}".format(job["error"] or job["message"]), *_skipped_outputs(7), job_id, None)
 
     result = job["result"]
     if job["kind"] == "asr":
@@ -157,6 +157,7 @@ def poll_job(job_ref):
             "",
             None,
             None,
+            job_id,
             None,
         )
     if job["kind"] == "process":
@@ -170,11 +171,19 @@ def poll_job(job_ref):
             keywords,
             canonical_ranges,
             gr.skip(),
+            job_id,
             None,
         )
     if job["kind"] == "render":
-        return (prefix + "完成。", *_skipped_outputs(6), result["video"], None)
-    return (prefix + "完成。", *_skipped_outputs(7), None)
+        return (prefix + "完成。", *_skipped_outputs(6), result["video"], job_id, None)
+    return (prefix + "完成。", *_skipped_outputs(7), job_id, None)
+
+
+def resume_job(job_id):
+    """Resume polling after a browser refresh using the visible job ID."""
+    if not str(job_id or "").strip():
+        return ("请输入需要恢复的后台任务 ID。", *_skipped_outputs(7), "", None)
+    return poll_job({"id": str(job_id).strip()})
 
 
 with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
@@ -185,6 +194,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     hotwords_input = gr.Textbox(label="热词（可留空）", value="")
     api_key_input = gr.Textbox(label="DeepSeek API Key", type="password")
     job_status = gr.Textbox(label="后台任务状态", interactive=False)
+    job_id_input = gr.Textbox(label="后台任务 ID（刷新后可粘贴恢复）")
 
     subtitle_output = gr.Textbox(label="字幕1：ASR 原始字幕", lines=12)
     corrected_output = gr.Textbox(label="字幕2：DeepSeek 洗稿字幕", lines=12)
@@ -200,6 +210,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
         subtitle_button = gr.Button("1. 生成字幕", variant="primary")
         highlight_button = gr.Button("2. 洗稿、提取高光与关键词")
         video_button = gr.Button("3. 生成视频")
+        resume_button = gr.Button("恢复/查询任务")
 
     subtitle_button.click(
         submit_generate,
@@ -213,8 +224,11 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             keyword_output,
             llm_result_state,
             video_output,
+            job_id_input,
             job_state,
         ],
+        show_progress="hidden",
+        concurrency_limit=4,
     )
     highlight_button.click(
         submit_process,
@@ -228,8 +242,11 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             keyword_output,
             llm_result_state,
             video_output,
+            job_id_input,
             job_state,
         ],
+        show_progress="hidden",
+        concurrency_limit=4,
     )
     video_button.click(
         submit_render,
@@ -243,8 +260,29 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             keyword_output,
             llm_result_state,
             video_output,
+            job_id_input,
             job_state,
         ],
+        show_progress="hidden",
+        concurrency_limit=4,
+    )
+    resume_button.click(
+        resume_job,
+        inputs=[job_id_input],
+        outputs=[
+            job_status,
+            subtitle_output,
+            video_state,
+            corrected_output,
+            highlight_output,
+            keyword_output,
+            llm_result_state,
+            video_output,
+            job_id_input,
+            job_state,
+        ],
+        show_progress="hidden",
+        concurrency_limit=4,
     )
     app.load(refresh_library_videos, outputs=[library_video_input])
     job_timer = gr.Timer(value=2)
@@ -260,11 +298,16 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             keyword_output,
             llm_result_state,
             video_output,
+            job_id_input,
             job_state,
         ],
+        show_progress="hidden",
+        concurrency_limit=4,
     )
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "7861"))
-    app.queue().launch(server_name="0.0.0.0", server_port=port, inbrowser=False)
+    app.queue(default_concurrency_limit=4, max_size=20).launch(
+        server_name="0.0.0.0", server_port=port, inbrowser=False
+    )
