@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -10,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 from funclip_loader import get_launch
+from subtitle_processing.sound_effect_binding import resolve_sound_effect_file
 
 
 def _escape_filter_path(path: Path) -> str:
@@ -54,6 +56,71 @@ def _parse_keywords(keywords: str | None) -> list[str]:
         if keyword and keyword not in values:
             values.append(keyword)
     return values
+
+
+def _time_to_ms(value: str) -> int:
+    hours, minutes, seconds = value.strip().replace(".", ",").split(":")
+    second, millis = seconds.split(",")
+    return (int(hours) * 3_600_000 + int(minutes) * 60_000 + int(second) * 1_000 + int(millis.ljust(3, "0")[:3]))
+
+
+def _parse_sound_bindings(value: str | None) -> dict[str, str]:
+    try:
+        payload = json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    bindings = payload.get("bindings", []) if isinstance(payload, dict) else []
+    return {
+        item["keyword"]: item["effect"]
+        for item in bindings
+        if isinstance(item, dict) and isinstance(item.get("keyword"), str) and isinstance(item.get("effect"), str)
+    }
+
+
+def _sound_effect_events(clip_srt: str, sound_bindings: str | None) -> list[tuple[int, Path, str]]:
+    bindings = _parse_sound_bindings(sound_bindings)
+    events = []
+    for start, end, text in _parse_srt_cues(clip_srt):
+        start_ms, end_ms = _time_to_ms(start), _time_to_ms(end)
+        compact = text.replace("\n", "")
+        for keyword, effect_name in bindings.items():
+            index = compact.find(keyword)
+            effect_file = resolve_sound_effect_file(effect_name)
+            if index < 0 or effect_file is None:
+                continue
+            offset = start_ms + round((end_ms - start_ms) * index / max(1, len(compact)))
+            events.append((offset, effect_file, keyword))
+    return events
+
+
+def _mix_sound_effects(video_path: str | Path, clip_srt: str, sound_bindings: str | None) -> tuple[str, int]:
+    events = _sound_effect_events(clip_srt, sound_bindings)
+    if not events:
+        return str(video_path), 0
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        logging.warning("FFmpeg is unavailable; skipping %d sound effects.", len(events))
+        return str(video_path), 0
+    source = Path(video_path).resolve()
+    output = source.with_name("{}_sfx{}".format(source.stem, source.suffix))
+    command = [ffmpeg, "-y", "-i", str(source)]
+    filters, mix_inputs = [], ["[0:a]"]
+    for index, (offset, effect_file, _) in enumerate(events, start=1):
+        command.extend(["-i", str(effect_file)])
+        label = "sfx{}".format(index)
+        filters.append("[{}:a]adelay={}:all=1,volume=0.80[{}]".format(index, max(0, offset), label))
+        mix_inputs.append("[{}]".format(label))
+    filters.append("{}amix=inputs={}:duration=first:normalize=0[aout]".format("".join(mix_inputs), len(mix_inputs)))
+    command.extend([
+        "-filter_complex", ";".join(filters), "-map", "0:v:0", "-map", "[aout]",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+    ])
+    completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
+    if completed.returncode:
+        logging.warning("Sound-effect mixing failed; returning captioned video: %s", completed.stderr[-1000:])
+        return str(video_path), 0
+    logging.warning("Mixed %d sound effects into %s", len(events), output)
+    return str(output), len(events)
 
 
 def _caption_font_size(text: str) -> int:
@@ -187,6 +254,7 @@ def render_highlight_video(
         output_dir: str | Path = "",
         burn_subtitles: bool = True,
         keywords: str | None = None,
+        sound_bindings: str | None = None,
         start_offset_ms: int = 0,
         end_offset_ms: int = 100):
     """Render LLM timestamp ranges. Returns video, audio, message, and clip SRT."""
@@ -202,7 +270,8 @@ def render_highlight_video(
         if video is None:
             return video, audio, message, clip_srt
         captioned_video = _burn_srt_with_ffmpeg(video, clip_srt, keywords)
-        return captioned_video, audio, "{}; burned subtitles via FFmpeg".format(message), clip_srt
+        final_video, sound_count = _mix_sound_effects(captioned_video, clip_srt, sound_bindings)
+        return final_video, audio, "{}; burned subtitles via FFmpeg; {} sound effects mixed".format(message, sound_count), clip_srt
     return launch.AI_clip(
         llm_result, "", "", start_offset_ms, end_offset_ms,
         video_state, None, str(output_dir),

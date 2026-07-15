@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 
 from subtitle_processing.local_correction_engine import correct_srt as correct_srt_like_local_script
+from subtitle_processing.sound_effect_binding import bind_keywords
 
 _SRT_TIME_RE = re.compile(
     r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
@@ -531,12 +532,31 @@ def process_subtitles(
     logging.warning("字幕处理阶段 3/3：关键词提取完成，返回 %d 个关键词。", len(keywords.splitlines()))
     if status_callback:
         status_callback("阶段 3/3：关键词提取完成，返回 {} 个关键词。".format(len(keywords.splitlines())))
+    logging.warning("字幕处理阶段 4/4：正在按历史规则和 DeepSeek 绑定音效。")
+    if status_callback:
+        status_callback("阶段 4/4：正在为关键词绑定音效。")
+    try:
+        sound_bindings = bind_keywords(
+            keywords,
+            api_key,
+            selected_model,
+            lambda system, user, content, key, selected: _call_deepseek(
+                system, user, content, key, selected, "stage 4/4 sound effects", json_response=True
+            ),
+        )
+    except Exception as exc:
+        logging.exception("字幕处理阶段 4/4：音效绑定失败。")
+        sound_bindings = '{"bindings": []}'
+        logging.warning("字幕处理阶段 4/4：忽略音效绑定错误：%s", exc)
+    if status_callback:
+        status_callback("阶段 4/4：音效绑定完成。")
     range_summary = "\n".join("[{}-{}]".format(start, end) for start, end in ranges)
     highlight_display = "高光时间戳：\n{}\n\n字幕3：\n{}".format(range_summary, highlight_srt)
     return (
         corrected_srt,
         highlight_display,
         keywords,
+        sound_bindings,
         canonical_ranges,
         build_corrected_video_state(video_state, corrected_srt),
     )

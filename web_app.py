@@ -41,6 +41,11 @@ patch_gradio_boolean_schema()
 
 from subtitle_generation import generate_subtitles
 from subtitle_processing import process_subtitles
+from subtitle_processing.sound_effect_binding import (
+    get_effect_details,
+    list_sound_effects,
+    save_effect_details,
+)
 from video_generation import render_highlight_video
 from background_jobs import JOBS
 
@@ -63,6 +68,23 @@ def refresh_library_videos():
     return gr.Dropdown(choices=list_library_videos(), value=None)
 
 
+def refresh_sound_effects():
+    choices = list_sound_effects()
+    return gr.Dropdown(choices=choices, value=choices[0] if choices else None)
+
+
+def load_sound_effect(effect_name):
+    if not effect_name:
+        return "", ""
+    return get_effect_details(effect_name)
+
+
+def save_sound_effect(effect_name, features):
+    if not effect_name:
+        raise gr.Error("Please select a sound-effect file first.")
+    return save_effect_details(effect_name, features)
+
+
 def resolve_library_video(selected_video):
     if not selected_video:
         return None
@@ -83,9 +105,9 @@ def submit_generate(uploaded_video_path, library_video, hotwords):
     try:
         video_path = resolve_library_video(library_video) or uploaded_video_path
     except ValueError as exc:
-        return ("字幕生成任务未提交：{}".format(exc), *_skipped_outputs(7), "", None)
+        return ("字幕生成任务未提交：{}".format(exc), *_skipped_outputs(8), "", None)
     if not video_path:
-        return ("请上传视频，或从服务器待处理视频中选择一个文件。", *_skipped_outputs(7), "", None)
+        return ("请上传视频，或从服务器待处理视频中选择一个文件。", *_skipped_outputs(8), "", None)
 
     def worker(report):
         report("阶段 1/1：正在进行 ASR 字幕识别。")
@@ -96,12 +118,12 @@ def submit_generate(uploaded_video_path, library_video, hotwords):
         return {"subtitle": srt, "video_state": video_state}
 
     job_id = JOBS.submit("asr", worker)
-    return ("字幕生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(7), job_id, {"id": job_id})
+    return ("字幕生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id})
 
 
 def submit_process(srt_text, api_key, keyword_count, video_state):
     if not srt_text:
-        return ("请先生成字幕。", *_skipped_outputs(7), "", None)
+        return ("请先生成字幕。", *_skipped_outputs(8), "", None)
     key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
 
     def worker(report):
@@ -115,36 +137,38 @@ def submit_process(srt_text, api_key, keyword_count, video_state):
         )
 
     job_id = JOBS.submit("process", worker)
-    return ("字幕处理已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(7), job_id, {"id": job_id})
+    return ("字幕处理已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id})
 
 
-def submit_render(llm_result, video_state, keywords):
+def submit_render(llm_result, video_state, keywords, sound_bindings):
     if video_state is None:
-        return ("请先完成字幕生成和第二步处理。", *_skipped_outputs(7), "", None)
+        return ("请先完成字幕生成和第二步处理。", *_skipped_outputs(8), "", None)
     if not llm_result:
-        return ("请先完成第二步高光提取。", *_skipped_outputs(7), "", None)
+        return ("请先完成第二步高光提取。", *_skipped_outputs(8), "", None)
 
     def worker(report):
         report("阶段 1/1：正在剪辑视频并烧录字幕。")
-        video, _, _, _ = render_highlight_video(llm_result, video_state, keywords=keywords)
+        video, _, _, _ = render_highlight_video(
+            llm_result, video_state, keywords=keywords, sound_bindings=sound_bindings
+        )
         report("阶段 1/1：视频生成完成。")
         return {"video": video}
 
     job_id = JOBS.submit("render", worker)
-    return ("视频生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(7), job_id, {"id": job_id})
+    return ("视频生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id})
 
 
 def poll_job(job_ref):
     job_id = job_ref.get("id") if isinstance(job_ref, dict) else None
     job = JOBS.get(job_id)
     if job is None:
-        return ("后台任务不存在，可能服务刚刚重启。", *_skipped_outputs(7), "", None)
+        return ("后台任务不存在，可能服务刚刚重启。", *_skipped_outputs(8), "", None)
     status = job["status"]
     prefix = "后台任务 {}：".format(job["kind"])
     if status in {"queued", "running"}:
-        return (prefix + job["message"], *_skipped_outputs(7), job_id, job_ref)
+        return (prefix + job["message"], *_skipped_outputs(8), job_id, job_ref)
     if status == "failed":
-        return (prefix + "失败：{}".format(job["error"] or job["message"]), *_skipped_outputs(7), job_id, None)
+        return (prefix + "失败：{}".format(job["error"] or job["message"]), *_skipped_outputs(8), job_id, None)
 
     result = job["result"]
     if job["kind"] == "asr":
@@ -157,11 +181,12 @@ def poll_job(job_ref):
             "",
             None,
             None,
+            None,
             job_id,
             None,
         )
     if job["kind"] == "process":
-        corrected_srt, highlight_display, keywords, canonical_ranges, updated_video_state = result
+        corrected_srt, highlight_display, keywords, sound_bindings, canonical_ranges, updated_video_state = result
         return (
             prefix + "完成。",
             gr.skip(),
@@ -169,20 +194,21 @@ def poll_job(job_ref):
             corrected_srt,
             highlight_display,
             keywords,
+            sound_bindings,
             canonical_ranges,
             gr.skip(),
             job_id,
             None,
         )
     if job["kind"] == "render":
-        return (prefix + "完成。", *_skipped_outputs(6), result["video"], job_id, None)
-    return (prefix + "完成。", *_skipped_outputs(7), job_id, None)
+        return (prefix + "完成。", *_skipped_outputs(7), result["video"], job_id, None)
+    return (prefix + "完成。", *_skipped_outputs(8), job_id, None)
 
 
 def resume_job(job_id):
     """Resume polling after a browser refresh using the visible job ID."""
     if not str(job_id or "").strip():
-        return ("请输入需要恢复的后台任务 ID。", *_skipped_outputs(7), "", None)
+        return ("请输入需要恢复的后台任务 ID。", *_skipped_outputs(8), "", None)
     return poll_job({"id": str(job_id).strip()})
 
 
@@ -201,6 +227,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     highlight_output = gr.Textbox(label="字幕3：高光时间戳与对应字幕", lines=12)
     keyword_count_input = gr.Number(label="预期关键词数量", value=8, precision=0, minimum=1)
     keyword_output = gr.Textbox(label="高光关键词", lines=6)
+    sound_bindings_output = gr.Textbox(label="第四步：关键词音效绑定", lines=8, interactive=False)
     video_output = gr.Video(label="视频输出", height=360, elem_id="generated-video")
     video_state = gr.State()
     llm_result_state = gr.State()
@@ -212,6 +239,17 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
         video_button = gr.Button("3. 生成视频")
         resume_button = gr.Button("恢复/查询任务")
 
+    with gr.Accordion("音效绑定库", open=False):
+        sound_effect_input = gr.Dropdown(label="音效文件", choices=list_sound_effects())
+        sound_feature_input = gr.Textbox(
+            label="该音效应绑定的关键词特征", lines=3,
+            placeholder="例如：警告, 禁止, 风险；用逗号或换行分隔",
+        )
+        sound_history_output = gr.Textbox(label="该音效历史关键词", lines=5, interactive=False)
+        with gr.Row():
+            sound_refresh_button = gr.Button("刷新音效列表")
+            sound_save_button = gr.Button("保存该音效绑定")
+
     subtitle_button.click(
         submit_generate,
         inputs=[video_input, library_video_input, hotwords_input],
@@ -222,6 +260,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             corrected_output,
             highlight_output,
             keyword_output,
+            sound_bindings_output,
             llm_result_state,
             video_output,
             job_id_input,
@@ -240,6 +279,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             corrected_output,
             highlight_output,
             keyword_output,
+            sound_bindings_output,
             llm_result_state,
             video_output,
             job_id_input,
@@ -250,7 +290,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     )
     video_button.click(
         submit_render,
-        inputs=[llm_result_state, video_state, keyword_output],
+        inputs=[llm_result_state, video_state, keyword_output, sound_bindings_output],
         outputs=[
             job_status,
             subtitle_output,
@@ -258,6 +298,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             corrected_output,
             highlight_output,
             keyword_output,
+            sound_bindings_output,
             llm_result_state,
             video_output,
             job_id_input,
@@ -276,6 +317,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             corrected_output,
             highlight_output,
             keyword_output,
+            sound_bindings_output,
             llm_result_state,
             video_output,
             job_id_input,
@@ -283,6 +325,23 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
         ],
         show_progress="hidden",
         concurrency_limit=4,
+    )
+    sound_refresh_button.click(
+        refresh_sound_effects,
+        outputs=[sound_effect_input],
+        show_progress="hidden",
+    )
+    sound_effect_input.change(
+        load_sound_effect,
+        inputs=[sound_effect_input],
+        outputs=[sound_feature_input, sound_history_output],
+        show_progress="hidden",
+    )
+    sound_save_button.click(
+        save_sound_effect,
+        inputs=[sound_effect_input, sound_feature_input],
+        outputs=[sound_feature_input, sound_history_output],
+        show_progress="hidden",
     )
     app.load(refresh_library_videos, outputs=[library_video_input])
     job_timer = gr.Timer(value=2)
@@ -296,6 +355,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             corrected_output,
             highlight_output,
             keyword_output,
+            sound_bindings_output,
             llm_result_state,
             video_output,
             job_id_input,
