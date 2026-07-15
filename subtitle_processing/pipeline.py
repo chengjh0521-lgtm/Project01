@@ -12,6 +12,9 @@ import urllib.request
 
 from subtitle_processing.local_correction_engine import correct_srt as correct_srt_like_local_script
 from subtitle_processing.sound_effect_binding import bind_keywords
+from subtitle_processing.multi_highlight_stage import select_multiple
+from subtitle_processing.keyword_stage import select_keywords as select_keywords_for_clip
+from subtitle_processing.correction_stage import run as run_correction_stage
 
 _SRT_TIME_RE = re.compile(
     r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
@@ -35,16 +38,34 @@ CORRECTION_SYSTEM_PROMPT = """
 输入来自自动语音识别，默认可能存在错误。你必须逐条、逐字检查 target_entries，并结合 context_entries 的前后文主动发现错误。
 
 必须严格遵守：
+
 1. 只校对 target_entries 中的字幕正文。
 2. 不得修改、合并、删除、新增或重新排序任何字幕条目。
 3. 每个目标条目的 id 必须原样返回，返回数量和顺序必须与 target_ids 完全一致。
 4. context_entries 仅用于理解上下文，不得出现在输出中。
-5. 优先修正可由语境或医学常识明确判断的同音字、近音字、错别字、四川话及其他口音造成的误识别、漏字、多字、重复识别、明显错误的断句或标点、医学术语、疾病名称、药物名称、检查项目、治疗方式、解剖部位、剂量、数值、百分比、时间和单位。
+5. 优先修正可由语境或医学常识明确判断的：
+   - 同音字、近音字、错别字；
+   - 四川话及其他口音造成的误识别；
+   - 漏字、多字、重复识别；
+   - 明显错误的断句或标点；
+   - 医学术语、疾病名称、药物名称；
+   - 检查项目、治疗方式、解剖部位；
+   - 剂量、数值、百分比、时间和单位。
 6. 不要因为整句话表面通顺就默认正确；对疑似词必须结合医学语境重新判断。
 7. 能够明确判断的错误应直接修正，不能因为过度保守而保留明显错误。
 8. 确实无法根据上下文确定时，保留原文，不得臆造。
-9. 只做校对，不做改写：保留原有表达顺序、医生和患者的口语风格、原本的重复、停顿词和语气；不总结、不扩写、不解释、不润色成书面语、不擅自改变医学观点。
-10. text 中只能包含校对后的字幕正文，不得包含时间戳、字幕编号、spk0、spk1 等说话人标签、Markdown、批注、解释或修改说明。
+9. 只做校对，不做改写：
+   - 保留原有表达顺序；
+   - 保留医生和患者的口语风格；
+   - 保留原本的重复、停顿词和语气；
+   - 不总结、不扩写、不解释；
+   - 不润色成书面语；
+   - 不擅自改变医学观点。
+10. text 中只能包含校对后的字幕正文：
+   - 不得包含时间戳；
+   - 不得包含字幕编号；
+   - 不得包含 spk0、spk1 等说话人标签；
+   - 不得包含 Markdown、批注、解释或修改说明。
 11. 原文没有错误时，必须原样返回，不要为了显示修改而改变文字。
 
 只返回一个合法 JSON 对象，格式必须为：
@@ -55,6 +76,7 @@ CORRECTION_SYSTEM_PROMPT = """
   ]
 }
 """.strip()
+
 CORRECTION_USER_PROMPT = "输入 JSON 中的 target_entries 是待校对字幕，context_entries 是完整上下文。请严格按系统要求返回 JSON。"
 KEYWORD_SYSTEM_PROMPT = """
 你是一个短视频字幕高亮分析器。
@@ -532,6 +554,7 @@ def process_subtitles(
     logging.warning("字幕处理阶段 3/3：关键词提取完成，返回 %d 个关键词。", len(keywords.splitlines()))
     if status_callback:
         status_callback("阶段 3/3：关键词提取完成，返回 {} 个关键词。".format(len(keywords.splitlines())))
+
     logging.warning("字幕处理阶段 4/4：正在按历史规则和 DeepSeek 绑定音效。")
     if status_callback:
         status_callback("阶段 4/4：正在为关键词绑定音效。")
@@ -561,3 +584,45 @@ def process_subtitles(
         canonical_ranges,
         build_corrected_video_state(video_state, corrected_srt),
     )
+
+
+def process_multiple_subtitles(
+        srt_text: str, api_key: str, keyword_count: int, clip_count: int,
+        video_state=None, model: str | None = None, status_callback=None):
+    """Four-stage batch pipeline. Each candidate owns its ranges, keywords and SFX."""
+    selected_model = model or os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-v4-flash")
+    if status_callback:
+        status_callback("阶段 1/4：正在校对字幕。")
+    corrected_srt = run_correction_stage(
+        srt_text, lambda source: correct_srt(source, api_key, selected_model, status_callback)
+    )
+
+    def call_stage(system, user):
+        return _call_deepseek(system, user, "", api_key, selected_model, "multi-highlight stage")
+
+    candidates = select_multiple(
+        corrected_srt, max(1, int(clip_count)), call_stage, report=status_callback
+    )
+    if not candidates:
+        raise SubtitlePipelineError("未提取到满足重合度限制的高光素材。")
+    for index, candidate in enumerate(candidates, start=1):
+        highlight_srt = build_highlight_srt(corrected_srt, candidate["ranges"])
+        keywords = select_keywords_for_clip(
+            highlight_srt, keyword_count,
+            lambda system, user: _call_deepseek(system, user, "", api_key, selected_model, "keyword stage"),
+        )
+        sound_bindings = bind_keywords(
+            keywords, highlight_srt, api_key, selected_model,
+            lambda system, user, content, key, chosen_model: _call_deepseek(
+                system, user, content, key, chosen_model, "sound-effect stage", json_response=True
+            ),
+        )
+        candidate.update({"highlight_srt": highlight_srt, "keywords": keywords, "sound_bindings": sound_bindings})
+        if status_callback:
+            status_callback("阶段 3-4/4：已完成第 {} / {} 条素材的关键词与音效。".format(index, len(candidates)))
+    display = "\n\n".join(
+        "素材 {}：\n{}".format(index, candidate["raw_result"])
+        for index, candidate in enumerate(candidates, start=1)
+    )
+    plan = {"clips": candidates}
+    return corrected_srt, display, plan, build_corrected_video_state(video_state, corrected_srt)

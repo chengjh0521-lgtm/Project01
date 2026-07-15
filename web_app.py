@@ -40,7 +40,7 @@ def patch_gradio_boolean_schema() -> None:
 patch_gradio_boolean_schema()
 
 from subtitle_generation import generate_subtitles
-from subtitle_processing import process_subtitles
+from subtitle_processing import process_multiple_subtitles
 from subtitle_processing.sound_effect_binding import (
     get_effect_details,
     list_sound_effects,
@@ -121,17 +121,14 @@ def submit_generate(uploaded_video_path, library_video, hotwords):
     return ("字幕生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id})
 
 
-def submit_process(srt_text, api_key, keyword_count, video_state):
+def submit_process(srt_text, api_key, keyword_count, clip_count, video_state):
     if not srt_text:
         return ("请先生成字幕。", *_skipped_outputs(8), "", None)
     key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
 
     def worker(report):
-        return process_subtitles(
-            srt_text,
-            key,
-            keyword_count,
-            video_state,
+        return process_multiple_subtitles(
+            srt_text, key, keyword_count, clip_count, video_state,
             model=os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-v4-flash"),
             status_callback=report,
         )
@@ -148,9 +145,17 @@ def submit_render(llm_result, video_state, keywords, sound_bindings):
 
     def worker(report):
         report("阶段 1/1：正在剪辑视频并烧录字幕。")
-        video, _, _, _ = render_highlight_video(
-            llm_result, video_state, keywords=keywords, sound_bindings=sound_bindings
-        )
+        if isinstance(llm_result, dict) and llm_result.get("clips"):
+            videos = []
+            for clip in llm_result["clips"]:
+                ranges = "\n".join("[{}-{}]".format(start, end) for start, end in clip["ranges"])
+                video, _, _, _ = render_highlight_video(
+                    ranges, video_state, keywords=clip["keywords"], sound_bindings=clip["sound_bindings"]
+                )
+                if video:
+                    videos.append(video)
+            return {"video": videos}
+        video, _, _, _ = render_highlight_video(llm_result, video_state, keywords=keywords, sound_bindings=sound_bindings)
         report("阶段 1/1：视频生成完成。")
         return {"video": video}
 
@@ -186,7 +191,9 @@ def poll_job(job_ref):
             None,
         )
     if job["kind"] == "process":
-        corrected_srt, highlight_display, keywords, sound_bindings, canonical_ranges, updated_video_state = result
+        corrected_srt, highlight_display, plan, updated_video_state = result
+        keywords = "\n\n".join("素材{}：\n{}".format(i, clip["keywords"]) for i, clip in enumerate(plan["clips"], 1))
+        sound_bindings = "\n\n".join("素材{}：\n{}".format(i, clip["sound_bindings"]) for i, clip in enumerate(plan["clips"], 1))
         return (
             prefix + "完成。",
             gr.skip(),
@@ -195,7 +202,7 @@ def poll_job(job_ref):
             highlight_display,
             keywords,
             sound_bindings,
-            canonical_ranges,
+            plan,
             gr.skip(),
             job_id,
             None,
@@ -226,9 +233,10 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     corrected_output = gr.Textbox(label="字幕2：DeepSeek 洗稿字幕", lines=12)
     highlight_output = gr.Textbox(label="字幕3：高光时间戳与对应字幕", lines=12)
     keyword_count_input = gr.Number(label="预期关键词数量", value=8, precision=0, minimum=1)
+    clip_count_input = gr.Number(label="目标视频数量", value=4, precision=0, minimum=1, maximum=8)
     keyword_output = gr.Textbox(label="高光关键词", lines=6)
     sound_bindings_output = gr.Textbox(label="第四步：关键词音效绑定", lines=8, interactive=False)
-    video_output = gr.Video(label="视频输出", height=360, elem_id="generated-video")
+    video_output = gr.File(label="输出视频（可多条下载）", file_count="multiple")
     video_state = gr.State()
     llm_result_state = gr.State()
     job_state = gr.State()
@@ -271,7 +279,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     )
     highlight_button.click(
         submit_process,
-        inputs=[subtitle_output, api_key_input, keyword_count_input, video_state],
+        inputs=[subtitle_output, api_key_input, keyword_count_input, clip_count_input, video_state],
         outputs=[
             job_status,
             subtitle_output,
