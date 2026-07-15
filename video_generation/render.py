@@ -64,21 +64,13 @@ def _time_to_ms(value: str) -> int:
     return (int(hours) * 3_600_000 + int(minutes) * 60_000 + int(second) * 1_000 + int(millis.ljust(3, "0")[:3]))
 
 
-def _parse_sound_bindings(value: str | None) -> dict[str, str]:
+def _parse_sound_bindings(value: str | None) -> list[dict[str, str]]:
     try:
         payload = json.loads(str(value or "{}"))
     except json.JSONDecodeError:
-        return {}
-    bindings = payload.get("bindings", []) if isinstance(payload, dict) else []
-    return {
-        item["keyword"]: item.get("sound_id") or item["effect"]
-        for item in bindings
-        if (
-            isinstance(item, dict)
-            and isinstance(item.get("keyword"), str)
-            and isinstance(item.get("sound_id") or item.get("effect"), str)
-        )
-    }
+        return []
+    cues = payload.get("cues", []) if isinstance(payload, dict) else []
+    return [item for item in cues if isinstance(item, dict) and isinstance(item.get("sound_id"), str)]
 
 
 def _sound_effect_events(clip_srt: str, sound_bindings: str | None) -> list[tuple[int, Path, str]]:
@@ -87,13 +79,14 @@ def _sound_effect_events(clip_srt: str, sound_bindings: str | None) -> list[tupl
     for start, end, text in _parse_srt_cues(clip_srt):
         start_ms, end_ms = _time_to_ms(start), _time_to_ms(end)
         compact = text.replace("\n", "")
-        for keyword, effect_name in bindings.items():
-            index = compact.find(keyword)
+        for cue in bindings:
+            text, effect_name = str(cue.get("text", "")), cue["sound_id"]
+            index = compact.find(text)
             effect_file = resolve_sound_effect_file(effect_name)
             if index < 0 or effect_file is None:
                 continue
             offset = start_ms + round((end_ms - start_ms) * index / max(1, len(compact)))
-            events.append((offset, effect_file, keyword))
+            events.append((offset, effect_file, text))
     return events
 
 

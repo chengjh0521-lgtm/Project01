@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 
 from subtitle_processing.local_correction_engine import correct_srt as correct_srt_like_local_script
-from subtitle_processing.sound_effect_binding import bind_keywords
+from subtitle_processing.sound_effect_binding import select_sound_cues
 from subtitle_processing.multi_highlight_stage import select_multiple
 from subtitle_processing.keyword_stage import select_keywords as select_keywords_for_clip
 from subtitle_processing.correction_stage import run as run_correction_stage
@@ -559,8 +559,7 @@ def process_subtitles(
     if status_callback:
         status_callback("阶段 4/4：正在为关键词绑定音效。")
     try:
-        sound_bindings = bind_keywords(
-            keywords,
+        sound_bindings = select_sound_cues(
             highlight_srt,
             api_key,
             selected_model,
@@ -611,8 +610,8 @@ def process_multiple_subtitles(
             highlight_srt, keyword_count,
             lambda system, user: _call_deepseek(system, user, "", api_key, selected_model, "keyword stage"),
         )
-        sound_bindings = bind_keywords(
-            keywords, highlight_srt, api_key, selected_model,
+        sound_bindings = select_sound_cues(
+            highlight_srt, api_key, selected_model,
             lambda system, user, content, key, chosen_model: _call_deepseek(
                 system, user, content, key, chosen_model, "sound-effect stage", json_response=True
             ),

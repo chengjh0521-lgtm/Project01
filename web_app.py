@@ -76,14 +76,14 @@ def refresh_sound_effects():
 
 def load_sound_effect(effect_name):
     if not effect_name:
-        return "", ""
-    return get_effect_details(effect_name)
+        return ""
+    return get_effect_details(effect_name)[0]
 
 
 def save_sound_effect(effect_name, features):
     if not effect_name:
         raise gr.Error("Please select a sound-effect file first.")
-    return save_effect_details(effect_name, features)
+    return save_effect_details(effect_name, features)[0]
 
 
 def resolve_library_video(selected_video):
@@ -248,7 +248,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     keyword_count_input = gr.Number(label="预期关键词数量", value=8, precision=0, minimum=1)
     clip_count_input = gr.Number(label="目标视频数量", value=4, precision=0, minimum=1, maximum=8)
     keyword_output = gr.Textbox(label="高光关键词", lines=6)
-    sound_bindings_output = gr.Textbox(label="第四步：关键词音效绑定", lines=8, interactive=False)
+    sound_bindings_output = gr.State()
     video_output = gr.File(label="输出视频（可多条下载）", file_count="multiple")
     video_state = gr.State()
     llm_result_state = gr.State()
@@ -270,7 +270,6 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             label="该音效应绑定的关键词特征", lines=3,
             placeholder="例如：警告, 禁止, 风险；用逗号或换行分隔",
         )
-        sound_history_output = gr.Textbox(label="该音效历史关键词", lines=5, interactive=False)
         with gr.Row():
             sound_refresh_button = gr.Button("刷新音效列表")
             sound_save_button = gr.Button("保存该音效绑定")
@@ -371,13 +370,13 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     sound_effect_input.change(
         load_sound_effect,
         inputs=[sound_effect_input],
-        outputs=[sound_feature_input, sound_history_output],
+        outputs=[sound_feature_input],
         show_progress="hidden",
     )
     sound_save_button.click(
         save_sound_effect,
         inputs=[sound_effect_input, sound_feature_input],
-        outputs=[sound_feature_input, sound_history_output],
+        outputs=[sound_feature_input],
         show_progress="hidden",
     )
     app.load(refresh_library_videos, outputs=[library_video_input])

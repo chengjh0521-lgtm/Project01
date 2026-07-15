@@ -32,6 +32,13 @@ sound_id 只能为合法音效 ID 或 null；confidence 为 0 到 1 的小数；
 """.strip()
 
 _SRT_TIMESTAMP_RE = re.compile(r"^\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->")
+_TIMESTAMP_RE = re.compile(r"^\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}$")
+
+SOUND_CUE_SYSTEM_PROMPT = """
+You are a restrained medical short-video sound director. Select a few meaningful sound cue positions from highlight subtitles, using only effects with non-empty descriptions. Do not use an effect for ordinary speech, repeats, or filler.
+Return JSON only: {"cues":[{"sound_id":"exact filename","timestamp":"00:00:12,300","text":"exact subtitle phrase","reason":"short reason"}]}.
+Each cue has one sound. Return an empty cues list when no placement is appropriate.
+""".strip()
 
 
 def sound_effect_directory() -> Path:
@@ -105,6 +112,37 @@ def save_effect_details(effect_name: str, features: str) -> tuple[str, str]:
         entry["keywords"] = list(dict.fromkeys([*entry.get("keywords", []), *terms]))
         _save_data(data)
     return get_effect_details(effect_name)
+
+
+def select_sound_cues(highlight_srt: str, api_key: str, model: str, llm_call: Callable[[str, str, str, str, str], str]) -> str:
+    """Stage 4: choose sound cues from subtitle context, not from keywords."""
+    with _LOCK:
+        data = _load_data()
+        effects = [
+            {"sound_id": name, "description": str(entry.get("features", "")).strip()}
+            for name, entry in data["effects"].items()
+            if str(entry.get("features", "")).strip() and resolve_sound_effect_file(name) is not None
+        ]
+    if not effects or not api_key:
+        return '{"cues": []}'
+    raw = llm_call(SOUND_CUE_SYSTEM_PROMPT, "Highlight subtitles:\n{}".format(highlight_srt), json.dumps({"sound_effects": effects, "highlight_srt": highlight_srt}, ensure_ascii=False), api_key, model)
+    try:
+        payload = json.loads(raw.strip())
+        cues = payload.get("cues", []) if isinstance(payload, dict) else []
+    except json.JSONDecodeError:
+        cues = []
+    valid, clean, used = {effect["sound_id"] for effect in effects}, [], set()
+    for cue in cues:
+        if not isinstance(cue, dict):
+            continue
+        sound_id, timestamp, text = cue.get("sound_id"), cue.get("timestamp"), cue.get("text")
+        if sound_id not in valid or not isinstance(timestamp, str) or not isinstance(text, str):
+            continue
+        if not _TIMESTAMP_RE.match(timestamp) or text not in highlight_srt or (sound_id, timestamp) in used:
+            continue
+        used.add((sound_id, timestamp))
+        clean.append({"sound_id": sound_id, "timestamp": timestamp, "text": text, "reason": str(cue.get("reason", ""))[:160]})
+    return json.dumps({"cues": clean}, ensure_ascii=False, indent=2)
 
 
 def _history_lookup(data: dict) -> dict[str, str]:
