@@ -538,6 +538,7 @@ def process_subtitles(
     try:
         sound_bindings = bind_keywords(
             keywords,
+            highlight_srt,
             api_key,
             selected_model,
             lambda system, user, content, key, selected: _call_deepseek(

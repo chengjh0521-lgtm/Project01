@@ -71,9 +71,13 @@ def _parse_sound_bindings(value: str | None) -> dict[str, str]:
         return {}
     bindings = payload.get("bindings", []) if isinstance(payload, dict) else []
     return {
-        item["keyword"]: item["effect"]
+        item["keyword"]: item.get("sound_id") or item["effect"]
         for item in bindings
-        if isinstance(item, dict) and isinstance(item.get("keyword"), str) and isinstance(item.get("effect"), str)
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("keyword"), str)
+            and isinstance(item.get("sound_id") or item.get("effect"), str)
+        )
     }
 
 
