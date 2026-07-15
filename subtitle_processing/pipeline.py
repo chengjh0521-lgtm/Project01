@@ -597,7 +597,7 @@ def process_multiple_subtitles(
     )
 
     def call_stage(system, user):
-        return _call_deepseek(system, user, "", api_key, selected_model, "multi-highlight stage")
+        return _call_deepseek(system, "Return timestamp ranges only.", user, api_key, selected_model, "multi-highlight stage")
 
     candidates = select_multiple(
         corrected_srt, max(1, int(clip_count)), call_stage, report=status_callback

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
+import logging
 from typing import Callable
 
 
 TIME_RE = re.compile(
-    r"\[?\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*(?:-|-->|–|—)\s*"
+    r"\[?\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*(?:-|-->|~)\s*"
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*\]?"
 )
 
@@ -83,10 +84,16 @@ def select_multiple(
         if report:
             report("阶段 2/4：正在提取第 {} 条低重合高光候选。".format(number))
         raw = call_llm(SYSTEM_PROMPT, user_prompt)
+        logging.warning("Multi-highlight candidate %d raw response:\n%s", number, raw)
         if raw.strip().upper() == "NONE":
             break
         ranges = parse_ranges(raw)
-        if not ranges or overlap_ratio(ranges, selected_ranges) > max_overlap:
+        overlap = overlap_ratio(ranges, selected_ranges) if ranges else 1.0
+        if not ranges:
+            logging.warning("Multi-highlight candidate %d had no parseable timestamps.", number)
+            break
+        if overlap > max_overlap:
+            logging.warning("Multi-highlight candidate %d rejected: overlap %.1f%% exceeds %.1f%%.", number, overlap * 100, max_overlap * 100)
             break
         selected.append({"id": "clip_{:02d}".format(number), "ranges": ranges, "raw_result": raw})
         selected_ranges.extend(ranges)
