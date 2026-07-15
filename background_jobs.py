@@ -45,8 +45,17 @@ class JobManager:
                     job.progress = max(job.progress, min(100, int(progress)))
             logging.warning("后台任务 %s [%s]：%s", job_id[:8], job.kind, message)
 
+        stop_pulse = threading.Event()
+
+        def pulse() -> None:
+            while not stop_pulse.wait(4):
+                with job.lock:
+                    if job.status == "running" and job.progress < 90:
+                        job.progress += 1
+
         try:
             report("后台任务已开始。")
+            threading.Thread(target=pulse, name="funclip-progress", daemon=True).start()
             result = worker(report)
             with job.lock:
                 job.status = "completed"
@@ -59,6 +68,8 @@ class JobManager:
                 job.status = "failed"
                 job.message = "任务失败。"
                 job.error = str(exc)
+        finally:
+            stop_pulse.set()
 
     def get(self, job_id: str | None) -> dict[str, Any] | None:
         if not job_id:

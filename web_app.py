@@ -11,9 +11,7 @@ import gradio as gr
 OUTPUT_VIDEO_CSS = """
 #generated-video { max-width: 640px; margin-left: auto; margin-right: auto; }
 #generated-video video { max-height: 360px; object-fit: contain; }
-.task-progress { min-height: 42px; font-size: 13px; color: #374151; }
-.task-progress span { display: block; margin-bottom: 4px; }
-.task-progress progress { width: 100%; height: 12px; accent-color: #2563eb; }
+.task-progress { min-width: 0; }
 @media (max-width: 640px) {
   #generated-video video { max-height: 280px; }
 }
@@ -103,16 +101,12 @@ def resolve_library_video(selected_video):
 def _skipped_outputs(count: int):
     return tuple(gr.skip() for _ in range(count))
 
-def _progress_bar(label: str, value: int):
-    return '<div class="task-progress"><span>{} {}%</span><progress value="{}" max="100"></progress></div>'.format(label, value, value)
-
-
 def _progress_updates(kind: str | None = None, value: int | None = None):
     value = 0 if value is None else max(0, min(100, int(value)))
     mapping = {
-        "asr": (_progress_bar("字幕生成", value), gr.skip(), gr.skip()),
-        "process": (gr.skip(), _progress_bar("字幕处理", value), gr.skip()),
-        "render": (gr.skip(), gr.skip(), _progress_bar("视频生成", value)),
+        "asr": (value, gr.skip(), gr.skip()),
+        "process": (gr.skip(), value, gr.skip()),
+        "render": (gr.skip(), gr.skip(), value),
     }
     return mapping.get(kind, (gr.skip(), gr.skip(), gr.skip()))
 
@@ -266,9 +260,9 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
         video_button = gr.Button("3. 生成视频")
         resume_button = gr.Button("恢复/查询任务")
     with gr.Row():
-        asr_progress = gr.HTML(_progress_bar("字幕生成", 0))
-        process_progress = gr.HTML(_progress_bar("字幕处理", 0))
-        render_progress = gr.HTML(_progress_bar("视频生成", 0))
+        asr_progress = gr.Slider(label="字幕生成进度", minimum=0, maximum=100, value=0, step=1, interactive=False, elem_classes="task-progress")
+        process_progress = gr.Slider(label="字幕处理进度", minimum=0, maximum=100, value=0, step=1, interactive=False, elem_classes="task-progress")
+        render_progress = gr.Slider(label="视频生成进度", minimum=0, maximum=100, value=0, step=1, interactive=False, elem_classes="task-progress")
 
     with gr.Accordion("音效绑定库", open=False):
         sound_effect_input = gr.Dropdown(label="音效文件", choices=list_sound_effects())
