@@ -18,6 +18,7 @@ class Job:
     message: str = "等待后台工作线程。"
     result: Any = None
     error: str | None = None
+    progress: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -27,7 +28,7 @@ class JobManager:
         self._jobs_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="funclip-job")
 
-    def submit(self, kind: str, worker: Callable[[Callable[[str], None]], Any]) -> str:
+    def submit(self, kind: str, worker: Callable[[Callable[[str, int | None], None]], Any]) -> str:
         job_id = uuid.uuid4().hex
         job = Job(kind=kind)
         with self._jobs_lock:
@@ -35,11 +36,13 @@ class JobManager:
         self._executor.submit(self._run, job_id, job, worker)
         return job_id
 
-    def _run(self, job_id: str, job: Job, worker: Callable[[Callable[[str], None]], Any]) -> None:
-        def report(message: str) -> None:
+    def _run(self, job_id: str, job: Job, worker: Callable[[Callable[[str, int | None], None]], Any]) -> None:
+        def report(message: str, progress: int | None = None) -> None:
             with job.lock:
                 job.status = "running"
                 job.message = message
+                if progress is not None:
+                    job.progress = max(job.progress, min(100, int(progress)))
             logging.warning("后台任务 %s [%s]：%s", job_id[:8], job.kind, message)
 
         try:
@@ -48,6 +51,7 @@ class JobManager:
             with job.lock:
                 job.status = "completed"
                 job.message = "任务完成。"
+                job.progress = 100
                 job.result = result
         except Exception as exc:
             logging.error("后台任务 %s [%s] 失败：\n%s", job_id[:8], job.kind, traceback.format_exc())
@@ -70,6 +74,7 @@ class JobManager:
                 "message": job.message,
                 "result": job.result,
                 "error": job.error,
+                "progress": job.progress,
             }
 
 

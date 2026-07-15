@@ -11,6 +11,9 @@ import gradio as gr
 OUTPUT_VIDEO_CSS = """
 #generated-video { max-width: 640px; margin-left: auto; margin-right: auto; }
 #generated-video video { max-height: 360px; object-fit: contain; }
+.task-progress { min-height: 42px; font-size: 13px; color: #374151; }
+.task-progress span { display: block; margin-bottom: 4px; }
+.task-progress progress { width: 100%; height: 12px; accent-color: #2563eb; }
 @media (max-width: 640px) {
   #generated-video video { max-height: 280px; }
 }
@@ -100,30 +103,43 @@ def resolve_library_video(selected_video):
 def _skipped_outputs(count: int):
     return tuple(gr.skip() for _ in range(count))
 
+def _progress_bar(label: str, value: int):
+    return '<div class="task-progress"><span>{} {}%</span><progress value="{}" max="100"></progress></div>'.format(label, value, value)
+
+
+def _progress_updates(kind: str | None, value: int | None = None):
+    value = 0 if value is None else max(0, min(100, int(value)))
+    mapping = {
+        "asr": (_progress_bar("字幕生成", value), gr.skip(), gr.skip()),
+        "process": (gr.skip(), _progress_bar("字幕处理", value), gr.skip()),
+        "render": (gr.skip(), gr.skip(), _progress_bar("视频生成", value)),
+    }
+    return mapping.get(kind, (gr.skip(), gr.skip(), gr.skip()))
+
 
 def submit_generate(uploaded_video_path, library_video, hotwords):
     try:
         video_path = resolve_library_video(library_video) or uploaded_video_path
     except ValueError as exc:
-        return ("字幕生成任务未提交：{}".format(exc), *_skipped_outputs(8), "", None)
+        return ("字幕生成任务未提交：{}".format(exc), *_skipped_outputs(8), "", None, *_progress_updates("asr", 0))
     if not video_path:
-        return ("请上传视频，或从服务器待处理视频中选择一个文件。", *_skipped_outputs(8), "", None)
+        return ("请上传视频，或从服务器待处理视频中选择一个文件。", *_skipped_outputs(8), "", None, *_progress_updates("asr", 0))
 
     def worker(report):
-        report("阶段 1/1：正在进行 ASR 字幕识别。")
+        report("阶段 1/1：正在进行 ASR 字幕识别。", 5)
         text, srt, video_state, _, _, _ = generate_subtitles(
             video_path, hotwords=hotwords or ""
         )
-        report("阶段 1/1：ASR 字幕识别完成。")
+        report("阶段 1/1：ASR 字幕识别完成。", 100)
         return {"subtitle": srt, "video_state": video_state}
 
     job_id = JOBS.submit("asr", worker)
-    return ("字幕生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id})
+    return ("字幕生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id}, *_progress_updates("asr", 0))
 
 
 def submit_process(srt_text, api_key, keyword_count, clip_count, video_state):
     if not srt_text:
-        return ("请先生成字幕。", *_skipped_outputs(8), "", None)
+        return ("请先生成字幕。", *_skipped_outputs(8), "", None, *_progress_updates("process", 0))
     key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
 
     def worker(report):
@@ -134,46 +150,47 @@ def submit_process(srt_text, api_key, keyword_count, clip_count, video_state):
         )
 
     job_id = JOBS.submit("process", worker)
-    return ("字幕处理已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id})
+    return ("字幕处理已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id}, *_progress_updates("process", 0))
 
 
 def submit_render(llm_result, video_state, keywords, sound_bindings):
     if video_state is None:
-        return ("请先完成字幕生成和第二步处理。", *_skipped_outputs(8), "", None)
+        return ("请先完成字幕生成和第二步处理。", *_skipped_outputs(8), "", None, *_progress_updates("render", 0))
     if not llm_result:
-        return ("请先完成第二步高光提取。", *_skipped_outputs(8), "", None)
+        return ("请先完成第二步高光提取。", *_skipped_outputs(8), "", None, *_progress_updates("render", 0))
 
     def worker(report):
-        report("阶段 1/1：正在剪辑视频并烧录字幕。")
+        report("阶段 1/1：正在剪辑视频并烧录字幕。", 5)
         if isinstance(llm_result, dict) and llm_result.get("clips"):
             videos = []
-            for clip in llm_result["clips"]:
+            for index, clip in enumerate(llm_result["clips"], start=1):
                 ranges = "\n".join("[{}-{}]".format(start, end) for start, end in clip["ranges"])
                 video, _, _, _ = render_highlight_video(
                     ranges, video_state, keywords=clip["keywords"], sound_bindings=clip["sound_bindings"]
                 )
                 if video:
                     videos.append(video)
+                report("阶段 1/1：已完成 {}/{} 条视频。".format(index, len(llm_result["clips"])), round(index * 100 / len(llm_result["clips"])))
             return {"video": videos}
         video, _, _, _ = render_highlight_video(llm_result, video_state, keywords=keywords, sound_bindings=sound_bindings)
-        report("阶段 1/1：视频生成完成。")
+        report("阶段 1/1：视频生成完成。", 100)
         return {"video": video}
 
     job_id = JOBS.submit("render", worker)
-    return ("视频生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id})
+    return ("视频生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id}, *_progress_updates("render", 0))
 
 
 def poll_job(job_ref):
     job_id = job_ref.get("id") if isinstance(job_ref, dict) else None
     job = JOBS.get(job_id)
     if job is None:
-        return ("后台任务不存在，可能服务刚刚重启。", *_skipped_outputs(8), "", None)
+        return ("后台任务不存在，可能服务刚刚重启。", *_skipped_outputs(8), "", None, *_progress_updates())
     status = job["status"]
     prefix = "后台任务 {}：".format(job["kind"])
     if status in {"queued", "running"}:
-        return (prefix + job["message"], *_skipped_outputs(8), job_id, job_ref)
+        return (prefix + job["message"], *_skipped_outputs(8), job_id, job_ref, *_progress_updates(job["kind"], job["progress"]))
     if status == "failed":
-        return (prefix + "失败：{}".format(job["error"] or job["message"]), *_skipped_outputs(8), job_id, None)
+        return (prefix + "失败：{}".format(job["error"] or job["message"]), *_skipped_outputs(8), job_id, None, *_progress_updates(job["kind"], job["progress"]))
 
     result = job["result"]
     if job["kind"] == "asr":
@@ -189,6 +206,7 @@ def poll_job(job_ref):
             None,
             job_id,
             None,
+            *_progress_updates("asr", 100),
         )
     if job["kind"] == "process":
         corrected_srt, highlight_display, plan, updated_video_state = result
@@ -206,16 +224,17 @@ def poll_job(job_ref):
             gr.skip(),
             job_id,
             None,
+            *_progress_updates("process", 100),
         )
     if job["kind"] == "render":
-        return (prefix + "完成。", *_skipped_outputs(7), result["video"], job_id, None)
-    return (prefix + "完成。", *_skipped_outputs(8), job_id, None)
+        return (prefix + "完成。", *_skipped_outputs(7), result["video"], job_id, None, *_progress_updates("render", 100))
+    return (prefix + "完成。", *_skipped_outputs(8), job_id, None, *_progress_updates())
 
 
 def resume_job(job_id):
     """Resume polling after a browser refresh using the visible job ID."""
     if not str(job_id or "").strip():
-        return ("请输入需要恢复的后台任务 ID。", *_skipped_outputs(8), "", None)
+        return ("请输入需要恢复的后台任务 ID。", *_skipped_outputs(8), "", None, *_progress_updates())
     return poll_job({"id": str(job_id).strip()})
 
 
@@ -246,6 +265,10 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
         highlight_button = gr.Button("2. 洗稿、提取高光与关键词")
         video_button = gr.Button("3. 生成视频")
         resume_button = gr.Button("恢复/查询任务")
+    with gr.Row():
+        asr_progress = gr.HTML(_progress_bar("字幕生成", 0))
+        process_progress = gr.HTML(_progress_bar("字幕处理", 0))
+        render_progress = gr.HTML(_progress_bar("视频生成", 0))
 
     with gr.Accordion("音效绑定库", open=False):
         sound_effect_input = gr.Dropdown(label="音效文件", choices=list_sound_effects())
@@ -273,6 +296,9 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             video_output,
             job_id_input,
             job_state,
+            asr_progress,
+            process_progress,
+            render_progress,
         ],
         show_progress="hidden",
         concurrency_limit=4,
@@ -292,6 +318,9 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             video_output,
             job_id_input,
             job_state,
+            asr_progress,
+            process_progress,
+            render_progress,
         ],
         show_progress="hidden",
         concurrency_limit=4,
@@ -311,6 +340,9 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             video_output,
             job_id_input,
             job_state,
+            asr_progress,
+            process_progress,
+            render_progress,
         ],
         show_progress="hidden",
         concurrency_limit=4,
@@ -330,6 +362,9 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             video_output,
             job_id_input,
             job_state,
+            asr_progress,
+            process_progress,
+            render_progress,
         ],
         show_progress="hidden",
         concurrency_limit=4,
@@ -368,6 +403,9 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             video_output,
             job_id_input,
             job_state,
+            asr_progress,
+            process_progress,
+            render_progress,
         ],
         show_progress="hidden",
         concurrency_limit=4,
