@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import logging
+import json
 from typing import Callable
 
 
@@ -14,12 +15,12 @@ TIME_RE = re.compile(
 
 SYSTEM_PROMPT = """
 你是医学科普短视频选题与剪辑分析器。请从完整 SRT 中选择一个适合传播的独立知识主题，
-每条成片时长 40 到 90 秒，可由多个不连续片段组成。优先选择结论明确、对普通观众有价值、
+每条成片总时长 40 到 90 秒，可由多个不连续片段组成。优先选择结论明确、对普通观众有价值、
 逻辑完整的医生解释；删除寒暄、重复、病史确认和无意义停顿。
 
-只输出时间段，每行格式严格为：
-[开始时间-结束时间] 对应字幕原文
-不得输出标题、分析或其他文字。
+只返回合法 JSON，不得输出 Markdown 或解释：
+{"ranges":[{"start":"00:00:01,000","end":"00:00:12,500"}]}
+start 和 end 必须完全来自输入 SRT 时间轴；无法选择时返回 {"ranges":[]}。
 """.strip()
 
 
@@ -37,6 +38,20 @@ def _ms(value: str) -> int:
 
 def parse_ranges(text: str) -> list[tuple[str, str]]:
     seen, values = set(), []
+    try:
+        payload = json.loads(text.strip())
+        items = payload.get("ranges", []) if isinstance(payload, dict) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            start, end = _normalize(str(item.get("start", ""))), _normalize(str(item.get("end", "")))
+            if _ms(end) > _ms(start) and (start, end) not in seen:
+                values.append((start, end))
+                seen.add((start, end))
+        if values or isinstance(payload, dict):
+            return values
+    except (json.JSONDecodeError, ValueError):
+        pass
     for match in TIME_RE.finditer(text):
         start, end = _normalize(match.group("start")), _normalize(match.group("end"))
         if _ms(end) > _ms(start) and (start, end) not in seen:
@@ -83,17 +98,22 @@ def select_multiple(
         ).format(corrected_srt, previous)
         if report:
             report("阶段 2/4：正在提取第 {} 条低重合高光候选。".format(number))
-        raw = call_llm(SYSTEM_PROMPT, user_prompt)
-        logging.warning("Multi-highlight candidate %d raw response:\n%s", number, raw)
-        if raw.strip().upper() == "NONE":
-            break
-        ranges = parse_ranges(raw)
-        overlap = overlap_ratio(ranges, selected_ranges) if ranges else 1.0
-        if not ranges:
-            logging.warning("Multi-highlight candidate %d had no parseable timestamps.", number)
-            break
-        if overlap > max_overlap:
-            logging.warning("Multi-highlight candidate %d rejected: overlap %.1f%% exceeds %.1f%%.", number, overlap * 100, max_overlap * 100)
+        raw, ranges = "", []
+        for attempt in range(1, 4):
+            raw = call_llm(
+                SYSTEM_PROMPT,
+                user_prompt + "\n\nThis is attempt {} of 3. Return the exact JSON object only.".format(attempt),
+            )
+            logging.warning("Multi-highlight candidate %d attempt %d raw response:\n%s", number, attempt, raw)
+            ranges = parse_ranges(raw)
+            overlap = overlap_ratio(ranges, selected_ranges) if ranges else 1.0
+            if ranges and overlap <= max_overlap:
+                break
+            logging.warning(
+                "Multi-highlight candidate %d attempt %d rejected: ranges=%d, overlap=%.1f%%.",
+                number, attempt, len(ranges), overlap * 100,
+            )
+        if not ranges or overlap_ratio(ranges, selected_ranges) > max_overlap:
             break
         selected.append({"id": "clip_{:02d}".format(number), "ranges": ranges, "raw_result": raw})
         selected_ranges.extend(ranges)
