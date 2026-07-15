@@ -14,6 +14,7 @@ SOUND_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 _LOCK = threading.Lock()
 _ROOT = Path(__file__).resolve().parent.parent / "sound_effects"
 _BINDINGS_FILE = _ROOT / "bindings.json"
+_CONFIG_FILE = _ROOT / "medical_sound_effects_config.json"
 
 SOUND_BINDING_SYSTEM_PROMPT = """
 你是一个短视频字幕关键词音效绑定器。输入包含 keywords、sound_effects，以及每个音效的用途说明和历史关键词。
@@ -46,7 +47,23 @@ def sound_effect_directory() -> Path:
     return Path(configured).expanduser() if configured else _ROOT / "audio"
 
 
+def _sound_config() -> dict:
+    path = Path(os.environ.get("FUNCLIP_SOUND_CONFIG", _CONFIG_FILE))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) and isinstance(data.get("sound_effects"), list) else {}
+
+
+def _configured_effects() -> list[dict]:
+    return [item for item in _sound_config().get("sound_effects", []) if isinstance(item, dict) and item.get("sound_id")]
+
+
 def list_sound_effects() -> list[str]:
+    configured = _configured_effects()
+    if configured:
+        return [str(item["sound_id"]) for item in configured if resolve_sound_effect_file(str(item["sound_id"]))]
     directory = sound_effect_directory()
     if not directory.is_dir():
         return []
@@ -56,7 +73,8 @@ def list_sound_effects() -> list[str]:
 def resolve_sound_effect_file(name: str) -> Path | None:
     if not name or Path(name).name != name:
         return None
-    path = sound_effect_directory() / name
+    config_item = next((item for item in _configured_effects() if item.get("sound_id") == name), {})
+    path = sound_effect_directory() / str(config_item.get("file_name") or name)
     return path if path.is_file() and path.suffix.lower() in SOUND_EXTENSIONS else None
 
 
@@ -93,7 +111,8 @@ def _split_terms(value: str) -> list[str]:
 def get_effect_details(effect_name: str) -> tuple[str, str]:
     with _LOCK:
         entry = _load_data()["effects"].get(effect_name, {})
-    return str(entry.get("features", "")), "\n".join(entry.get("keywords", []))
+    config_item = next((item for item in _configured_effects() if item.get("sound_id") == effect_name), {})
+    return str(entry.get("features") or config_item.get("description") or ""), ""
 
 
 def save_effect_details(effect_name: str, features: str) -> tuple[str, str]:
@@ -118,14 +137,27 @@ def select_sound_cues(highlight_srt: str, api_key: str, model: str, llm_call: Ca
     """Stage 4: choose sound cues from subtitle context, not from keywords."""
     with _LOCK:
         data = _load_data()
-        effects = [
-            {"sound_id": name, "description": str(entry.get("features", "")).strip()}
-            for name, entry in data["effects"].items()
-            if str(entry.get("features", "")).strip() and resolve_sound_effect_file(name) is not None
-        ]
+        overrides = data["effects"]
+        config = _sound_config()
+        effects = []
+        for item in _configured_effects():
+            sound_id = str(item["sound_id"])
+            description = str(overrides.get(sound_id, {}).get("features") or item.get("description") or "").strip()
+            if description and resolve_sound_effect_file(sound_id) is not None:
+                effects.append({
+                    "sound_id": sound_id,
+                    "display_name": item.get("display_name", sound_id),
+                    "file_name": item.get("file_name", ""),
+                    "description": description,
+                    "semantic_tags": item.get("semantic_tags", []),
+                    "example_keywords": item.get("example_keywords", []),
+                    "strength": item.get("strength", ""),
+                    "recommended_max_per_30s": item.get("recommended_max_per_30s"),
+                    "avoid_scenes": item.get("avoid_scenes", []),
+                })
     if not effects or not api_key:
         return '{"cues": []}'
-    raw = llm_call(SOUND_CUE_SYSTEM_PROMPT, "Highlight subtitles:\n{}".format(highlight_srt), json.dumps({"sound_effects": effects, "highlight_srt": highlight_srt}, ensure_ascii=False), api_key, model)
+    raw = llm_call(SOUND_CUE_SYSTEM_PROMPT, "Highlight subtitles:\n{}".format(highlight_srt), json.dumps({"global_rules": config.get("global_rules", {}), "sound_effects": effects, "highlight_srt": highlight_srt}, ensure_ascii=False), api_key, model)
     try:
         payload = json.loads(raw.strip())
         cues = payload.get("cues", []) if isinstance(payload, dict) else []
