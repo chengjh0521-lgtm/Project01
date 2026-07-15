@@ -107,7 +107,7 @@ def _progress_bar(label: str, value: int):
     return '<div class="task-progress"><span>{} {}%</span><progress value="{}" max="100"></progress></div>'.format(label, value, value)
 
 
-def _progress_updates(kind: str | None, value: int | None = None):
+def _progress_updates(kind: str | None = None, value: int | None = None):
     value = 0 if value is None else max(0, min(100, int(value)))
     mapping = {
         "asr": (_progress_bar("字幕生成", value), gr.skip(), gr.skip()),
