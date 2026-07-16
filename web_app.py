@@ -133,6 +133,12 @@ def _progress_updates(kind: str | None = None, value: int | None = None):
     return mapping.get(kind, (gr.skip(), gr.skip(), gr.skip()))
 
 
+def toggle_clip_count_settings(is_visible):
+    """Keep multi-video output as an advanced, opt-in setting."""
+    visible = not bool(is_visible)
+    return gr.update(visible=visible), visible
+
+
 def submit_generate(uploaded_video_path, library_video, hotwords):
     try:
         video_path = resolve_library_video(library_video) or uploaded_video_path
@@ -274,7 +280,9 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     corrected_output = gr.Textbox(label="字幕2：DeepSeek 洗稿字幕", lines=12)
     highlight_output = gr.Textbox(label="字幕3：高光时间戳与对应字幕", lines=12)
     keyword_count_input = gr.Number(label="预期关键词数量", value=8, precision=0, minimum=1)
-    clip_count_input = gr.Number(label="目标视频数量", value=4, precision=0, minimum=1, maximum=8)
+    clip_count_input = gr.Number(
+        label="最大输出视频数量", value=1, precision=0, minimum=1, maximum=8, visible=False
+    )
     keyword_output = gr.Textbox(label="高光关键词", lines=6)
     sound_bindings_output = gr.State()
     video_output = gr.File(label="输出视频（可多条下载）", file_count="multiple")
@@ -282,11 +290,13 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     video_state = gr.State()
     llm_result_state = gr.State()
     job_state = gr.State()
+    clip_count_settings_visible = gr.State(False)
 
     with gr.Row():
         subtitle_button = gr.Button("1. 生成字幕", variant="primary")
         highlight_button = gr.Button("2. 洗稿、提取高光与关键词")
         video_button = gr.Button("3. 生成视频")
+        clip_count_toggle_button = gr.Button("设置最大输出视频数量")
         resume_button = gr.Button("恢复/查询任务")
     with gr.Row():
         asr_progress = gr.Slider(label="字幕生成进度", minimum=0, maximum=100, value=0, step=1, interactive=False, elem_classes="task-progress")
@@ -325,6 +335,12 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
         ],
         show_progress="hidden",
         concurrency_limit=4,
+    )
+    clip_count_toggle_button.click(
+        toggle_clip_count_settings,
+        inputs=[clip_count_settings_visible],
+        outputs=[clip_count_input, clip_count_settings_visible],
+        show_progress="hidden",
     )
     highlight_button.click(
         submit_process,
