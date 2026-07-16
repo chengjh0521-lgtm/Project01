@@ -17,7 +17,7 @@ class VisualAssetBindingTests(unittest.TestCase):
                 "start": "00:00:01,000",
                 "end": "00:00:04,000",
                 "text": "Avoid smoking.",
-                "keywords": ["smoking"],
+                "keywords": [{"word": "smoking", "start": 2.286, "end": 3.786}],
             }],
         )
 
@@ -26,14 +26,15 @@ class VisualAssetBindingTests(unittest.TestCase):
 
         def call_llm(_system, _user, content, _key, _model):
             request = json.loads(content)
-            self.assertEqual(request["sentences"][0]["keywords"], ["smoking"])
-            return json.dumps({"placements": [{
+            self.assertEqual(
+                request["sentences"][0]["keywords"],
+                [{"word": "smoking", "start": 2.286, "end": 3.786}],
+            )
+            return json.dumps({"results": [{
                 "sentence_id": 1,
                 "use_asset": True,
                 "asset_id": "warning",
                 "target_word": "smoking",
-                "position": "upper_right",
-                "duration_seconds": 2,
                 "reason": "risk",
             }]})
 
@@ -41,6 +42,8 @@ class VisualAssetBindingTests(unittest.TestCase):
             "subtitle_processing.visual_asset_binding._available_assets", return_value=available
         ), patch(
             "subtitle_processing.visual_asset_binding._asset_config", return_value={"selection_rules": {}}
+        ), patch(
+            "subtitle_processing.visual_asset_binding.get_visual_asset_definition", return_value={"media_type": "image"}
         ):
             result = json.loads(select_visual_assets(
                 "1\n00:00:01,000 --> 00:00:04,000\nAvoid smoking.\n",
