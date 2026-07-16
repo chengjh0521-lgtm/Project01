@@ -587,17 +587,11 @@ def process_subtitles(
     )
 
 
-def process_multiple_subtitles(
-        srt_text: str, api_key: str, keyword_count: int, clip_count: int,
+def _process_from_corrected_subtitles(
+        corrected_srt: str, api_key: str, keyword_count: int, clip_count: int,
         video_state=None, model: str | None = None, status_callback=None):
-    """Five-stage batch pipeline. Each candidate owns its ranges, keywords, SFX and visuals."""
+    """Run stages 2-5 from an already corrected SRT subtitle file."""
     selected_model = model or os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-v4-flash")
-    if status_callback:
-        status_callback("阶段 1/5：正在校对字幕。")
-    corrected_srt = run_correction_stage(
-        srt_text, lambda source: correct_srt(source, api_key, selected_model, status_callback)
-    )
-
     def call_stage(system, user):
         return _call_deepseek(
             system, "Return the required JSON object only.", user, api_key, selected_model,
@@ -648,3 +642,35 @@ def process_multiple_subtitles(
     )
     plan = {"clips": candidates}
     return corrected_srt, display, plan, build_corrected_video_state(video_state, corrected_srt)
+
+
+def process_multiple_subtitles(
+        srt_text: str, api_key: str, keyword_count: int, clip_count: int,
+        video_state=None, model: str | None = None, status_callback=None, on_corrected=None):
+    """Run all five stages beginning with DeepSeek subtitle correction."""
+    selected_model = model or os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-v4-flash")
+    if status_callback:
+        status_callback("阶段 1/5：正在校对字幕。")
+    corrected_srt = run_correction_stage(
+        srt_text, lambda source: correct_srt(source, api_key, selected_model, status_callback)
+    )
+    if on_corrected:
+        on_corrected(corrected_srt)
+    return _process_from_corrected_subtitles(
+        corrected_srt, api_key, keyword_count, clip_count, video_state, selected_model, status_callback
+    )
+
+
+def process_from_corrected_subtitles(
+        corrected_srt: str, api_key: str, keyword_count: int, clip_count: int,
+        video_state=None, model: str | None = None, status_callback=None):
+    """Resume processing from a persisted subtitle 2 file without another correction call."""
+    try:
+        parse_srt(corrected_srt)
+    except Exception as exc:
+        raise SubtitlePipelineError("保存的字幕2不是有效 SRT：{}".format(exc)) from exc
+    if status_callback:
+        status_callback("阶段 1/5：已载入保存的字幕2，跳过 ASR 与洗稿。")
+    return _process_from_corrected_subtitles(
+        corrected_srt, api_key, keyword_count, clip_count, video_state, model, status_callback
+    )

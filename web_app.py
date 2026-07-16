@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -60,7 +62,7 @@ def patch_gradio_boolean_schema() -> None:
 patch_gradio_boolean_schema()
 
 from subtitle_generation import generate_subtitles
-from subtitle_processing import process_multiple_subtitles
+from subtitle_processing import process_from_corrected_subtitles, process_multiple_subtitles
 from subtitle_processing.sound_effect_binding import (
     get_effect_details,
     list_sound_effects,
@@ -72,6 +74,7 @@ from background_jobs import JOBS
 
 VIDEO_LIBRARY_DIR = Path(__file__).resolve().parent / "subtitle_generation" / "pending_videos"
 SOUND_LOGIC_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "sound_effect_logic"
+SAVED_CORRECTED_SUBTITLE_DIR = Path(__file__).resolve().parent / "subtitle_processing" / "saved_corrected_subtitles"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 
 
@@ -116,6 +119,36 @@ def resolve_library_video(selected_video):
     if candidate.suffix.lower() not in VIDEO_EXTENSIONS:
         raise ValueError("所选文件不是支持的视频格式。")
     return str(candidate)
+
+
+def list_saved_corrected_subtitles():
+    SAVED_CORRECTED_SUBTITLE_DIR.mkdir(parents=True, exist_ok=True)
+    return sorted((path.name for path in SAVED_CORRECTED_SUBTITLE_DIR.glob("*.srt")), reverse=True)
+
+
+def refresh_saved_corrected_subtitles():
+    choices = list_saved_corrected_subtitles()
+    return gr.Dropdown(choices=choices, value=choices[0] if choices else None)
+
+
+def _saved_corrected_subtitle_path(file_name):
+    if not file_name:
+        raise ValueError("请先选择一份已保存的字幕2文件。")
+    root = SAVED_CORRECTED_SUBTITLE_DIR.resolve()
+    path = (root / str(file_name)).resolve()
+    if root not in path.parents or not path.is_file() or path.suffix.lower() != ".srt":
+        raise ValueError("所选字幕2文件不存在或不在保存目录内。")
+    return path
+
+
+def save_corrected_subtitle(srt_text):
+    """Persist subtitle 2 once so later tests can skip correction entirely."""
+    SAVED_CORRECTED_SUBTITLE_DIR.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(str(srt_text).encode("utf-8")).hexdigest()[:10]
+    filename = "subtitle2_{}_{}.srt".format(datetime.now().strftime("%Y%m%d_%H%M%S"), digest)
+    path = SAVED_CORRECTED_SUBTITLE_DIR / filename
+    path.write_text(str(srt_text).rstrip() + "\n", encoding="utf-8")
+    return str(path)
 
 
 def write_sound_effect_logic(video_path, clip_srt, sound_bindings, clip_id, ranges=None, visual_bindings=None):
@@ -183,14 +216,46 @@ def submit_process(srt_text, api_key, keyword_count, clip_count, video_state):
     key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
 
     def worker(report):
-        return process_multiple_subtitles(
+        corrected_file = None
+
+        def save_after_correction(corrected_srt):
+            nonlocal corrected_file
+            try:
+                corrected_file = save_corrected_subtitle(corrected_srt)
+                report("阶段 1/5：字幕2已保存，可用于后续直接测试。")
+            except OSError as exc:
+                logging.warning("保存字幕2失败：%s", exc)
+
+        result = process_multiple_subtitles(
             srt_text, key, keyword_count, clip_count, video_state,
             model=os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-v4-flash"),
             status_callback=report,
+            on_corrected=save_after_correction,
         )
+        return {"pipeline": result, "corrected_file": corrected_file or save_corrected_subtitle(result[0])}
 
     job_id = JOBS.submit("process", worker)
     return ("字幕处理已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(9), job_id, {"id": job_id}, *_progress_updates("process", 0))
+
+
+def submit_process_from_saved(saved_file, api_key, keyword_count, clip_count, video_state):
+    try:
+        path = _saved_corrected_subtitle_path(saved_file)
+        corrected_srt = path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        return ("保存字幕任务未提交：{}".format(exc), *_skipped_outputs(9), "", None, *_progress_updates("process", 0))
+    key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+
+    def worker(report):
+        result = process_from_corrected_subtitles(
+            corrected_srt, key, keyword_count, clip_count, video_state,
+            model=os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-v4-flash"),
+            status_callback=report,
+        )
+        return {"pipeline": result, "corrected_file": str(path)}
+
+    job_id = JOBS.submit("process", worker)
+    return ("已保存字幕2处理任务已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(9), job_id, {"id": job_id}, *_progress_updates("process", 0))
 
 
 def submit_render(llm_result, video_state, keywords, sound_bindings):
@@ -237,13 +302,13 @@ def poll_job(job_ref):
     job_id = job_ref.get("id") if isinstance(job_ref, dict) else None
     job = JOBS.get(job_id)
     if job is None:
-        return ("后台任务不存在，可能服务刚刚重启。", *_skipped_outputs(9), "", None, *_progress_updates())
+        return ("后台任务不存在，可能服务刚刚重启。", *_skipped_outputs(10), "", None, *_progress_updates())
     status = job["status"]
     prefix = "后台任务 {}：".format(job["kind"])
     if status in {"queued", "running"}:
-        return (prefix + job["message"], *_skipped_outputs(9), job_id, job_ref, *_progress_updates(job["kind"], job["progress"]))
+        return (prefix + job["message"], *_skipped_outputs(10), job_id, job_ref, *_progress_updates(job["kind"], job["progress"]))
     if status == "failed":
-        return (prefix + "失败：{}".format(job["error"] or job["message"]), *_skipped_outputs(9), job_id, None, *_progress_updates(job["kind"], job["progress"]))
+        return (prefix + "失败：{}".format(job["error"] or job["message"]), *_skipped_outputs(10), job_id, None, *_progress_updates(job["kind"], job["progress"]))
 
     result = job["result"]
     if job["kind"] == "asr":
@@ -252,6 +317,7 @@ def poll_job(job_ref):
             result["subtitle"],
             result["video_state"],
             "",
+            None,
             "",
             "",
             None,
@@ -263,7 +329,7 @@ def poll_job(job_ref):
             *_progress_updates("asr", 100),
         )
     if job["kind"] == "process":
-        corrected_srt, highlight_display, plan, updated_video_state = result
+        corrected_srt, highlight_display, plan, updated_video_state = result["pipeline"]
         keywords = "\n\n".join("素材{}：\n{}".format(i, clip["keywords"]) for i, clip in enumerate(plan["clips"], 1))
         sound_bindings = "\n\n".join("素材{}：\n{}".format(i, clip["sound_bindings"]) for i, clip in enumerate(plan["clips"], 1))
         return (
@@ -271,6 +337,7 @@ def poll_job(job_ref):
             gr.skip(),
             updated_video_state,
             corrected_srt,
+            result["corrected_file"],
             highlight_display,
             keywords,
             sound_bindings,
@@ -282,14 +349,14 @@ def poll_job(job_ref):
             *_progress_updates("process", 100),
         )
     if job["kind"] == "render":
-        return (prefix + "完成。", *_skipped_outputs(7), result["video"], result["sound_logic"], job_id, None, *_progress_updates("render", 100))
-    return (prefix + "完成。", *_skipped_outputs(9), job_id, None, *_progress_updates())
+        return (prefix + "完成。", *_skipped_outputs(8), result["video"], result["sound_logic"], job_id, None, *_progress_updates("render", 100))
+    return (prefix + "完成。", *_skipped_outputs(10), job_id, None, *_progress_updates())
 
 
 def resume_job(job_id):
     """Resume polling after a browser refresh using the visible job ID."""
     if not str(job_id or "").strip():
-        return ("请输入需要恢复的后台任务 ID。", *_skipped_outputs(9), "", None, *_progress_updates())
+        return ("请输入需要恢复的后台任务 ID。", *_skipped_outputs(10), "", None, *_progress_updates())
     return poll_job({"id": str(job_id).strip()})
 
 
@@ -305,6 +372,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
 
     subtitle_output = gr.Textbox(label="字幕1：ASR 原始字幕", lines=12)
     corrected_output = gr.Textbox(label="字幕2：DeepSeek 洗稿字幕", lines=12)
+    corrected_file_output = gr.File(label="字幕2：已保存 SRT（可下载）")
     highlight_output = gr.Textbox(label="字幕3：高光时间戳与对应字幕", lines=12)
     keyword_count_input = gr.Number(label="预期关键词数量", value=8, precision=0, minimum=1)
     clip_count_input = gr.Number(
@@ -339,6 +407,14 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
         with gr.Row():
             sound_refresh_button = gr.Button("刷新音效列表")
             sound_save_button = gr.Button("保存该音效绑定")
+
+    with gr.Accordion("已保存的字幕2", open=False):
+        saved_corrected_input = gr.Dropdown(
+            label="服务器保存的洗稿字幕", choices=list_saved_corrected_subtitles()
+        )
+        with gr.Row():
+            saved_corrected_refresh_button = gr.Button("刷新保存字幕")
+            saved_corrected_continue_button = gr.Button("使用已保存字幕继续处理")
 
     subtitle_button.click(
         submit_generate,
@@ -392,6 +468,34 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
         show_progress="hidden",
         concurrency_limit=4,
     )
+    saved_corrected_refresh_button.click(
+        refresh_saved_corrected_subtitles,
+        outputs=[saved_corrected_input],
+        show_progress="hidden",
+    )
+    saved_corrected_continue_button.click(
+        submit_process_from_saved,
+        inputs=[saved_corrected_input, api_key_input, keyword_count_input, clip_count_input, video_state],
+        outputs=[
+            job_status,
+            subtitle_output,
+            video_state,
+            corrected_output,
+            highlight_output,
+            keyword_output,
+            sound_bindings_output,
+            llm_result_state,
+            video_output,
+            sound_logic_output,
+            job_id_input,
+            job_state,
+            asr_progress,
+            process_progress,
+            render_progress,
+        ],
+        show_progress="hidden",
+        concurrency_limit=4,
+    )
     video_button.click(
         submit_render,
         inputs=[llm_result_state, video_state, keyword_output, sound_bindings_output],
@@ -423,6 +527,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             subtitle_output,
             video_state,
             corrected_output,
+            corrected_file_output,
             highlight_output,
             keyword_output,
             sound_bindings_output,
@@ -456,6 +561,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
         show_progress="hidden",
     )
     app.load(refresh_library_videos, outputs=[library_video_input])
+    app.load(refresh_saved_corrected_subtitles, outputs=[saved_corrected_input])
     job_timer = gr.Timer(value=2)
     job_timer.tick(
         poll_job,
@@ -465,6 +571,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             subtitle_output,
             video_state,
             corrected_output,
+            corrected_file_output,
             highlight_output,
             keyword_output,
             sound_bindings_output,
