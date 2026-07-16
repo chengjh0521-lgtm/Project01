@@ -121,6 +121,17 @@ def _parse_visual_bindings(value: str | None) -> list[dict]:
     return [item for item in placements if isinstance(item, dict) and isinstance(item.get("asset_id"), str)]
 
 
+def _visual_asset_duration_seconds(definition: dict) -> float:
+    """Static images flash for 0.2 seconds; GIFs retain their indexed real duration."""
+    if definition.get("media_type") != "animated_gif":
+        return 0.2
+    try:
+        duration = float(definition.get("duration_seconds", 3.0))
+    except (TypeError, ValueError):
+        duration = 3.0
+    return max(0.04, duration)
+
+
 def _visual_asset_events(clip_srt: str, visual_bindings: str | None) -> list[dict]:
     bindings = _parse_visual_bindings(visual_bindings)
     events = []
@@ -138,16 +149,13 @@ def _visual_asset_events(clip_srt: str, visual_bindings: str | None) -> list[dic
             asset_file, definition = resolve_visual_asset_file(asset_id), get_visual_asset_definition(asset_id)
             if word_index < 0 or asset_file is None or not definition:
                 continue
-            try:
-                duration = float(placement.get("duration_seconds", 2.0))
-            except (TypeError, ValueError):
-                duration = 2.0
+            duration = _visual_asset_duration_seconds(definition)
             offset = start_ms + round((end_ms - start_ms) * word_index / max(1, len(compact)))
             technical = definition.get("technical_metadata") if isinstance(definition.get("technical_metadata"), dict) else {}
             events.append({
                 "offset_ms": offset,
                 "timestamp": _format_timestamp(offset),
-                "duration_seconds": max(0.5, min(5.0, duration)),
+                "duration_seconds": duration,
                 "asset_id": asset_id,
                 "asset_file": asset_file.name,
                 "media_type": definition.get("media_type", "image"),

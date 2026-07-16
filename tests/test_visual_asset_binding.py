@@ -25,7 +25,7 @@ class VisualAssetBindingTests(unittest.TestCase):
                 "recommended_scenes": "风险提醒。",
                 "disabled_scenes": "普通过渡。",
                 "size": "426x240",
-                "duration_seconds": 3,
+                "duration_seconds": 5.2,
             }], ensure_ascii=False), encoding="utf-8")
             with patch.dict(os.environ, {
                 "FUNCLIP_VISUAL_ASSET_CONFIG": str(config_path),
@@ -35,8 +35,34 @@ class VisualAssetBindingTests(unittest.TestCase):
 
         self.assertEqual(assets[0]["file_name"], "7月16日.gif")
         self.assertEqual(assets[0]["media_type"], "animated_gif")
-        self.assertEqual(assets[0]["duration_seconds"], 3.0)
+        self.assertEqual(assets[0]["duration_seconds"], 5.2)
         self.assertTrue(assets[0]["technical_metadata"]["requires_chroma_key"])
+
+    def test_static_images_always_use_a_brief_point_two_second_duration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            asset_directory = root / "assets"
+            asset_directory.mkdir()
+            (asset_directory / "meal.png").write_bytes(b"PNG")
+            config_path = root / "picture_assets_index.json"
+            config_path.write_text(json.dumps([{
+                "id": "asset_image",
+                "file_name": "meal.png",
+                "description": "A balanced meal.",
+                "main_content": "Meal.",
+                "recommended_scenes": "Diet.",
+                "disabled_scenes": "None.",
+                "size": "100x100",
+                "duration_seconds": 9.0,
+            }]), encoding="utf-8")
+            with patch.dict(os.environ, {
+                "FUNCLIP_VISUAL_ASSET_CONFIG": str(config_path),
+                "FUNCLIP_VISUAL_ASSET_DIR": str(asset_directory),
+            }, clear=False):
+                assets = _available_assets()
+
+        self.assertEqual(assets[0]["media_type"], "image")
+        self.assertEqual(assets[0]["duration_seconds"], 0.2)
 
     def test_visual_sentences_only_expose_present_keywords(self):
         srt = "1\n00:00:01,000 --> 00:00:04,000\nAvoid smoking.\n"
@@ -126,6 +152,7 @@ class VisualAssetBindingTests(unittest.TestCase):
         self.assertEqual(events[0]["asset_id"], "warning")
         self.assertEqual(events[0]["asset_file"], "warning.png")
         self.assertEqual(events[0]["target_word"], "smoking")
+        self.assertEqual(events[0]["duration_seconds"], 0.2)
 
 
 if __name__ == "__main__":

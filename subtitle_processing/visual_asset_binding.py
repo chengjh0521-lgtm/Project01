@@ -12,6 +12,7 @@ from typing import Callable
 
 _ROOT = Path(__file__).resolve().parent.parent / "visual_assets"
 _CONFIG_FILES = (_ROOT / "picture_assets_index.json", _ROOT / "picture_for_video_asset_index.json")
+_STATIC_IMAGE_DURATION_SECONDS = 0.2
 _SRT_RANGE_RE = re.compile(
     r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})"
@@ -24,7 +25,9 @@ VISUAL_ASSET_SYSTEM_PROMPT = """
 
 你必须依据提供的素材索引（picture_assets_index.json）完成所有判断，不允许凭空创造素材或修改素材定义。
 
-输入包含 asset_index 和 sentences。asset_index 中每个素材包含 id、file_name、description、main_content、recommended_scenes、disabled_scenes、size 和 duration_seconds。description 与 main_content 表示素材真正表达的内容；recommended_scenes 是推荐使用语义；disabled_scenes 为强约束，必须严格遵守。部分素材还会带 media_type 和 technical_metadata，它们仅用于后续烧录，不参与素材优先级判断。
+输入包含 asset_index 和 sentences。asset_index 中每个素材包含 id、file_name、description、main_content、recommended_scenes、disabled_scenes、size、media_type 和 duration_seconds。description 与 main_content 表示素材真正表达的内容；recommended_scenes 是推荐使用语义；disabled_scenes 为强约束，必须严格遵守。
+
+duration_seconds 是后端已经确定的播放时长，不需要也不允许你改写：media_type 为 image 的静态图片固定只出现 0.2 秒，用作快速视觉提示；media_type 为 animated_gif 的动图使用索引中记录的真实完整时长。你只负责选择是否使用和选择绑定位置，绝对不要在输出中增加 duration_seconds、position 或其他渲染参数。
 
 sentences 中每项包含 sentence_id、text 和 keywords。keywords 仅用于定位素材出现的位置，真正的判断依据始终是整句话。请逐句分析：判断是否值得加入视觉素材；若需要，从 asset_index 中选择一个最合适的素材；并从该句 keywords 中选择一个关键词作为绑定位置。若没有合适素材，则不使用素材。
 
@@ -59,6 +62,17 @@ def _config_path() -> Path:
     return next((path for path in _CONFIG_FILES if path.is_file()), _CONFIG_FILES[0])
 
 
+def _asset_duration_seconds(item: dict, is_gif: bool) -> float:
+    """Use the index duration only for GIFs; images are intentionally brief flashes."""
+    if not is_gif:
+        return _STATIC_IMAGE_DURATION_SECONDS
+    try:
+        duration = float(item.get("duration_seconds", 3.0))
+    except (TypeError, ValueError):
+        duration = 3.0
+    return max(0.04, duration)
+
+
 def _normalise_asset(item: dict) -> dict:
     """Expose both generations of the index through the current field contract."""
     raw_file_name = str(item.get("file_name", ""))
@@ -71,11 +85,8 @@ def _normalise_asset(item: dict) -> dict:
     size_match = re.fullmatch(r"\s*(\d+)\s*[xX]\s*(\d+)\s*", str(item.get("size", "")))
     width = metadata.get("width") or (int(size_match.group(1)) if size_match else None)
     height = metadata.get("height") or (int(size_match.group(2)) if size_match else None)
-    try:
-        duration = float(item.get("duration_seconds", 3.0))
-    except (TypeError, ValueError):
-        duration = 3.0
     is_gif = extension == ".gif" or item.get("media_type") == "animated_gif"
+    duration = _asset_duration_seconds(item, is_gif)
     return {
         **item,
         "file_name": file_name,
@@ -88,7 +99,7 @@ def _normalise_asset(item: dict) -> dict:
         "disabled_scenes": str(item.get("disabled_scenes") or item.get("forbidden_scenes") or ""),
         "forbidden_scenes": str(item.get("forbidden_scenes") or item.get("disabled_scenes") or ""),
         "size": str(item.get("size") or "{}x{}".format(width or "", height or "")),
-        "duration_seconds": max(0.5, min(6.0, duration)),
+        "duration_seconds": duration,
         "technical_metadata": {
             "width": width,
             "height": height,
@@ -110,7 +121,12 @@ def _asset_config() -> dict:
         return {
             "schema_version": "array-index",
             "purpose": "Medical short-video visual asset index",
-            "selection_rules": {"allow_no_asset": True, "max_assets_per_sentence": 1},
+            "selection_rules": {
+                "allow_no_asset": True,
+                "max_assets_per_sentence": 1,
+                "static_image_duration_seconds": _STATIC_IMAGE_DURATION_SECONDS,
+                "animated_gif_duration": "Use the configured real duration_seconds exactly.",
+            },
             "assets": [_normalise_asset(item) for item in data if isinstance(item, dict)],
         }
     if isinstance(data, dict) and isinstance(data.get("assets"), list):
@@ -251,6 +267,11 @@ def select_visual_assets(
             "schema_version": config.get("schema_version", ""),
             "purpose": config.get("purpose", ""),
             "selection_rules": config.get("selection_rules", {}),
+            "rendering_policy": {
+                "image": "Static images are brief 0.2-second flashes.",
+                "animated_gif": "Animated GIFs play for the exact duration_seconds in their asset definition.",
+                "model_output": "Do not output duration_seconds or rendering settings.",
+            },
             "assets": assets,
         },
         "sentences": [
@@ -313,16 +334,16 @@ def select_visual_assets(
             )
             continue
         definition = get_visual_asset_definition(asset_id)
-        try:
-            duration = float(definition.get("duration_seconds", 3.0))
-        except (TypeError, ValueError):
-            duration = 3.0
+        duration = _asset_duration_seconds(
+            definition,
+            definition.get("media_type") == "animated_gif",
+        )
         clean.append({
             "sentence_id": sentence_id,
             "asset_id": asset_id,
             "target_word": target_word,
             "position": "upper_right",
-            "duration_seconds": max(0.5, min(6.0, duration)),
+            "duration_seconds": duration,
             "reason": str(result.get("reason", ""))[:160],
         })
     return json.dumps({"placements": clean}, ensure_ascii=False, indent=2)
