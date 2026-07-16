@@ -561,6 +561,7 @@ def process_subtitles(
     try:
         sound_bindings = select_sound_cues(
             highlight_srt,
+            keywords,
             api_key,
             selected_model,
             lambda system, user, content, key, selected: _call_deepseek(
@@ -614,7 +615,7 @@ def process_multiple_subtitles(
             lambda system, user: _call_deepseek(system, user, "", api_key, selected_model, "keyword stage"),
         )
         sound_bindings = select_sound_cues(
-            highlight_srt, api_key, selected_model,
+            highlight_srt, keywords, api_key, selected_model,
             lambda system, user, content, key, chosen_model: _call_deepseek(
                 system, user, content, key, chosen_model, "sound-effect stage", json_response=True
             ),

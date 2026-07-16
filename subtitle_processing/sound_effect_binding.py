@@ -33,12 +33,25 @@ sound_id 只能为合法音效 ID 或 null；confidence 为 0 到 1 的小数；
 """.strip()
 
 _SRT_TIMESTAMP_RE = re.compile(r"^\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->")
+_SRT_RANGE_RE = re.compile(
+    r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
+    r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})"
+)
 _TIMESTAMP_RE = re.compile(r"^\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}$")
 
 SOUND_CUE_SYSTEM_PROMPT = """
-You are a restrained medical short-video sound director. Select a few meaningful sound cue positions from highlight subtitles, using only effects with non-empty descriptions. Do not use an effect for ordinary speech, repeats, or filler.
-Return JSON only: {"cues":[{"sound_id":"exact filename","timestamp":"00:00:12,300","text":"exact subtitle phrase","reason":"short reason"}]}.
-Each cue has one sound. Return an empty cues list when no placement is appropriate.
+你是一名专业的短视频音效导演（Audio Director）。你的职责不是给关键词分类，而是根据一句字幕的完整语义，决定这一句是否需要音效、使用哪个音效、音效落在哪一个关键词上。医学科普视频必须自然、克制，不能滥用音效。
+
+输入包含 sound_effects_config 和 sentences。sound_effects_config 定义所有允许使用的音效，只能选择其中的 sound_id，绝不能创建新音效。sentences 的每条包含 sentence_id、text 和 keywords；keywords 只用于定位，判断必须依据整句语义。
+
+逐句处理，且每个 sentence_id 必须且只能输出一次，顺序与输入一致。每句最多一个音效、一个 target_word；target_word 必须完全来自该句的 keywords，不能修改或创造新词。若不适合音效，必须 use_sound=false，sound_id 和 target_word 为 null。宁可不用，也不要强行使用。
+
+优先考虑：危险行为（抽烟、喝酒、熬夜、自行停药）、医生最终结论（不能、必须、一定、千万不要、最好、建议）、关键数字（比例、剂量、频次、时长）、重要医学概念，以及答案揭晓或关键转折。普通连接词、口头禅、寒暄、重复表达和无传播价值的信息通常不用音效。必须结合整句理解，例如“糖尿病患者千万不要抽烟”应强调“抽烟”，而非“糖尿病”；“空腹血糖最好控制在7以下”可强调“7”。
+
+description 表示音效适合的真实语义，semantic_tags 和 example_keywords 仅用于理解，avoid_scenes 优先遵守，strength 是强调力度而不是优先级。连续字幕属于同一知识点时，原则上只选信息量最大、传播价值最高、情绪变化最明显或结论最明确的一句，避免连续音效。
+
+只输出合法 JSON，不输出 Markdown 或额外文字：
+{"results":[{"sentence_id":15,"use_sound":true,"sound_id":"sound_id_from_config","target_word":"原始关键词","confidence":0.97,"reason":"简短原因"},{"sentence_id":16,"use_sound":false,"sound_id":null,"target_word":null,"confidence":0.99,"reason":"简短原因"}]}
 """.strip()
 
 
@@ -133,8 +146,43 @@ def save_effect_details(effect_name: str, features: str) -> tuple[str, str]:
     return get_effect_details(effect_name)
 
 
-def select_sound_cues(highlight_srt: str, api_key: str, model: str, llm_call: Callable[[str, str, str, str, str], str]) -> str:
-    """Stage 4: choose sound cues from subtitle context, not from keywords."""
+def _keyword_values(keywords_text: str) -> list[str]:
+    values = []
+    for part in re.split(r"[\n,，;；、]+", str(keywords_text or "")):
+        value = re.sub(r"^\s*\d+\s*[.、)]\s*", "", part).strip(" \t\"'“”")
+        if value and value not in values:
+            values.append(value)
+    return values
+
+
+def _highlight_sentences(highlight_srt: str, keywords_text: str) -> list[dict]:
+    """Build the sentence-level contract required by the sound-director prompt."""
+    lines = str(highlight_srt or "").replace("\r\n", "\n").replace("\r", "\n").splitlines()
+    timestamp_indexes = [index for index, line in enumerate(lines) if _SRT_RANGE_RE.match(line)]
+    keywords = _keyword_values(keywords_text)
+    sentences = []
+    for position, time_index in enumerate(timestamp_indexes, start=1):
+        match = _SRT_RANGE_RE.match(lines[time_index])
+        assert match is not None
+        end_index = timestamp_indexes[position] if position < len(timestamp_indexes) else len(lines)
+        if end_index > time_index + 1 and re.match(r"^\s*\d+(?:\s+spk\S+)?\s*$", lines[end_index - 1]):
+            end_index -= 1
+        text = " ".join(line.strip() for line in lines[time_index + 1:end_index] if line.strip())
+        if not text:
+            continue
+        sentences.append({
+            "sentence_id": position,
+            "start": match.group("start").replace(".", ","),
+            "text": text,
+            "keywords": [keyword for keyword in keywords if keyword in text],
+        })
+    return sentences
+
+
+def select_sound_cues(
+        highlight_srt: str, keywords_text: str, api_key: str, model: str,
+        llm_call: Callable[[str, str, str, str, str], str]) -> str:
+    """Stage 4: let the LLM choose at most one sound cue per subtitle sentence."""
     with _LOCK:
         data = _load_data()
         overrides = data["effects"]
@@ -155,25 +203,53 @@ def select_sound_cues(highlight_srt: str, api_key: str, model: str, llm_call: Ca
                     "recommended_max_per_30s": item.get("recommended_max_per_30s"),
                     "avoid_scenes": item.get("avoid_scenes", []),
                 })
-    if not effects or not api_key:
+    sentences = _highlight_sentences(highlight_srt, keywords_text)
+    if not effects or not api_key or not sentences:
         return '{"cues": []}'
-    raw = llm_call(SOUND_CUE_SYSTEM_PROMPT, "Highlight subtitles:\n{}".format(highlight_srt), json.dumps({"global_rules": config.get("global_rules", {}), "sound_effects": effects, "highlight_srt": highlight_srt}, ensure_ascii=False), api_key, model)
+    request = {
+        "sound_effects_config": {
+            "global_rules": config.get("global_rules", {}),
+            "sound_effects": effects,
+        },
+        "sentences": [
+            {"sentence_id": item["sentence_id"], "text": item["text"], "keywords": item["keywords"]}
+            for item in sentences
+        ],
+    }
+    raw = llm_call(
+        SOUND_CUE_SYSTEM_PROMPT,
+        "请逐句返回音效决策。每个 sentence_id 都必须出现一次。",
+        json.dumps(request, ensure_ascii=False),
+        api_key,
+        model,
+    )
     try:
         payload = json.loads(raw.strip())
-        cues = payload.get("cues", []) if isinstance(payload, dict) else []
+        results = payload.get("results", []) if isinstance(payload, dict) else []
     except json.JSONDecodeError:
-        cues = []
+        results = []
     valid, clean, used = {effect["sound_id"] for effect in effects}, [], set()
-    for cue in cues:
-        if not isinstance(cue, dict):
+    sentence_by_id = {item["sentence_id"]: item for item in sentences}
+    for result in results:
+        if not isinstance(result, dict):
             continue
-        sound_id, timestamp, text = cue.get("sound_id"), cue.get("timestamp"), cue.get("text")
-        if sound_id not in valid or not isinstance(timestamp, str) or not isinstance(text, str):
+        sentence_id = result.get("sentence_id")
+        if isinstance(sentence_id, str) and sentence_id.isdigit():
+            sentence_id = int(sentence_id)
+        sentence = sentence_by_id.get(sentence_id)
+        if not sentence or not result.get("use_sound") or sentence_id in used:
             continue
-        if not _TIMESTAMP_RE.match(timestamp) or text not in highlight_srt or (sound_id, timestamp) in used:
+        sound_id, target_word = result.get("sound_id"), result.get("target_word")
+        if sound_id not in valid or not isinstance(target_word, str) or target_word not in sentence["keywords"]:
             continue
-        used.add((sound_id, timestamp))
-        clean.append({"sound_id": sound_id, "timestamp": timestamp, "text": text, "reason": str(cue.get("reason", ""))[:160]})
+        used.add(sentence_id)
+        clean.append({
+            "sound_id": sound_id,
+            "timestamp": sentence["start"],
+            "text": target_word,
+            "reason": str(result.get("reason", ""))[:160],
+            "sentence_id": sentence_id,
+        })
     return json.dumps({"cues": clean}, ensure_ascii=False, indent=2)
 
 
