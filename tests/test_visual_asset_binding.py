@@ -38,7 +38,7 @@ class VisualAssetBindingTests(unittest.TestCase):
         self.assertEqual(assets[0]["duration_seconds"], 5.2)
         self.assertTrue(assets[0]["technical_metadata"]["requires_chroma_key"])
 
-    def test_static_images_always_use_a_brief_point_two_second_duration(self):
+    def test_static_images_keep_the_configured_point_two_second_minimum(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             asset_directory = root / "assets"
@@ -53,7 +53,7 @@ class VisualAssetBindingTests(unittest.TestCase):
                 "recommended_scenes": "Diet.",
                 "disabled_scenes": "None.",
                 "size": "100x100",
-                "duration_seconds": 9.0,
+                "duration_seconds": 0.2,
             }]), encoding="utf-8")
             with patch.dict(os.environ, {
                 "FUNCLIP_VISUAL_ASSET_CONFIG": str(config_path),
@@ -91,6 +91,7 @@ class VisualAssetBindingTests(unittest.TestCase):
                 "use_asset": True,
                 "asset_id": "warning",
                 "target_word": "smoking",
+                "duration_seconds": 1.2,
                 "reason": "risk",
             }]})
 
@@ -106,6 +107,7 @@ class VisualAssetBindingTests(unittest.TestCase):
                 "smoking", "key", "model", call_llm,
             ))
         self.assertEqual(result["placements"][0]["asset_id"], "warning")
+        self.assertEqual(result["placements"][0]["duration_seconds"], 1.2)
 
     def test_selection_keeps_valid_placement_when_model_omits_other_sentences(self):
         available = [{"id": "warning", "file_name": "warning.png", "media_type": "image"}]
@@ -116,6 +118,7 @@ class VisualAssetBindingTests(unittest.TestCase):
                 "use_asset": True,
                 "asset_id": "warning",
                 "target_word": "smoking",
+                "duration_seconds": 1.0,
                 "reason": "risk",
             }]})
 
@@ -144,7 +147,11 @@ class VisualAssetBindingTests(unittest.TestCase):
         }]})
         with patch("video_generation.render.resolve_visual_asset_file", return_value=Path("warning.png")), patch(
             "video_generation.render.get_visual_asset_definition",
-            return_value={"media_type": "image", "technical_metadata": {"requires_chroma_key": False}},
+            return_value={
+                "media_type": "image",
+                "duration_seconds": 0.2,
+                "technical_metadata": {"requires_chroma_key": False},
+            },
         ):
             events = describe_visual_asset_events(
                 "1\n00:00:01,000 --> 00:00:04,000\nAvoid smoking.\n", bindings
@@ -152,6 +159,22 @@ class VisualAssetBindingTests(unittest.TestCase):
         self.assertEqual(events[0]["asset_id"], "warning")
         self.assertEqual(events[0]["asset_file"], "warning.png")
         self.assertEqual(events[0]["target_word"], "smoking")
+        self.assertEqual(events[0]["duration_seconds"], 2.0)
+
+    def test_render_event_never_uses_less_than_the_asset_minimum_duration(self):
+        bindings = json.dumps({"placements": [{
+            "sentence_id": 1,
+            "asset_id": "warning",
+            "target_word": "smoking",
+            "duration_seconds": 0.1,
+        }]})
+        with patch("video_generation.render.resolve_visual_asset_file", return_value=Path("warning.png")), patch(
+            "video_generation.render.get_visual_asset_definition",
+            return_value={"media_type": "image", "duration_seconds": 0.2},
+        ):
+            events = describe_visual_asset_events(
+                "1\n00:00:01,000 --> 00:00:04,000\nAvoid smoking.\n", bindings
+            )
         self.assertEqual(events[0]["duration_seconds"], 0.2)
 
 

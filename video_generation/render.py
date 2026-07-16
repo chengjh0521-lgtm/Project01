@@ -121,15 +121,18 @@ def _parse_visual_bindings(value: str | None) -> list[dict]:
     return [item for item in placements if isinstance(item, dict) and isinstance(item.get("asset_id"), str)]
 
 
-def _visual_asset_duration_seconds(definition: dict) -> float:
-    """Static images flash for 0.2 seconds; GIFs retain their indexed real duration."""
-    if definition.get("media_type") != "animated_gif":
-        return 0.2
+def _visual_asset_duration_seconds(definition: dict, requested: object) -> float:
+    """Preserve each asset's configured minimum while honoring the LLM's semantic duration."""
+    default = 3.0 if definition.get("media_type") == "animated_gif" else 0.2
     try:
-        duration = float(definition.get("duration_seconds", 3.0))
+        minimum = float(definition.get("duration_seconds", default))
     except (TypeError, ValueError):
-        duration = 3.0
-    return max(0.04, duration)
+        minimum = default
+    try:
+        duration = float(requested)
+    except (TypeError, ValueError):
+        duration = minimum
+    return max(max(0.04, minimum), min(12.0, duration))
 
 
 def _visual_asset_events(clip_srt: str, visual_bindings: str | None) -> list[dict]:
@@ -149,7 +152,7 @@ def _visual_asset_events(clip_srt: str, visual_bindings: str | None) -> list[dic
             asset_file, definition = resolve_visual_asset_file(asset_id), get_visual_asset_definition(asset_id)
             if word_index < 0 or asset_file is None or not definition:
                 continue
-            duration = _visual_asset_duration_seconds(definition)
+            duration = _visual_asset_duration_seconds(definition, placement.get("duration_seconds"))
             offset = start_ms + round((end_ms - start_ms) * word_index / max(1, len(compact)))
             technical = definition.get("technical_metadata") if isinstance(definition.get("technical_metadata"), dict) else {}
             events.append({

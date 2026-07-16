@@ -12,7 +12,8 @@ from typing import Callable
 
 _ROOT = Path(__file__).resolve().parent.parent / "visual_assets"
 _CONFIG_FILES = (_ROOT / "picture_assets_index.json", _ROOT / "picture_for_video_asset_index.json")
-_STATIC_IMAGE_DURATION_SECONDS = 0.2
+_STATIC_IMAGE_MIN_DURATION_SECONDS = 0.2
+_MAX_DISPLAY_DURATION_SECONDS = 12.0
 _SRT_RANGE_RE = re.compile(
     r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})"
@@ -27,18 +28,20 @@ VISUAL_ASSET_SYSTEM_PROMPT = """
 
 输入包含 asset_index 和 sentences。asset_index 中每个素材包含 id、file_name、description、main_content、recommended_scenes、disabled_scenes、size、media_type 和 duration_seconds。description 与 main_content 表示素材真正表达的内容；recommended_scenes 是推荐使用语义；disabled_scenes 为强约束，必须严格遵守。
 
-duration_seconds 是后端已经确定的播放时长，不需要也不允许你改写：media_type 为 image 的静态图片固定只出现 0.2 秒，用作快速视觉提示；media_type 为 animated_gif 的动图使用索引中记录的真实完整时长。你只负责选择是否使用和选择绑定位置，绝对不要在输出中增加 duration_seconds、position 或其他渲染参数。
+duration_seconds 表示该素材的最短展示时长，而不是固定时长。静态图片的最短时长通常为 0.2 秒；动图的最短时长通常等于其真实完整时长。你必须根据当前句子的知识密度、关键词的重要性和画面停留是否有助理解，决定实际展示时长：普通快速提示可接近最短时长，具体食物/器官/行为等需要观众辨识的素材应适度延长，核心结论或重点提醒可更长。不要为了显眼而长时间遮挡画面。
 
-sentences 中每项包含 sentence_id、text 和 keywords。keywords 仅用于定位素材出现的位置，真正的判断依据始终是整句话。请逐句分析：判断是否值得加入视觉素材；若需要，从 asset_index 中选择一个最合适的素材；并从该句 keywords 中选择一个关键词作为绑定位置。若没有合适素材，则不使用素材。
+你必须在 use_asset=true 时输出 duration_seconds。它必须是不小于该素材 duration_seconds 的数字；不使用素材时为 null。只允许决定 asset_id、target_word 和 duration_seconds，绝对不要输出 position 或其他渲染参数。
+
+sentences 中每项包含 sentence_id、start、end、text 和 keywords。素材会从 target_word 出现时开始展示；start 与 end 用于理解该句可用的时间窗口。keywords 仅用于定位素材出现的位置，真正的判断依据始终是整句话。请逐句分析：判断是否值得加入视觉素材；若需要，从 asset_index 中选择一个最合适的素材；并从该句 keywords 中选择一个关键词作为绑定位置。若没有合适素材，则不使用素材。
 
 先理解句子，再选择素材。素材应该帮助观众理解句子的核心信息，而不是仅仅对应某个名词。例如“糖尿病患者最好少吃油炸食品”应展示油炸食品素材，而不是糖尿病素材。只有当素材能明显提升理解效率时才使用：明确实物、人体器官或疾病示意图、生活方式、容易视觉化的医学概念，或需要重点提醒的结论。普通连接句、过渡句、寒暄、抽象推理、没有明确视觉对应物的内容通常不用素材。宁可不用，也不要强行选择。
 
-选择素材时必须综合参考 description、main_content、recommended_scenes 和 disabled_scenes。若违反 disabled_scenes，即使内容相似也不得选择。连续几句话讨论同一知识点时，原则上只在最值得展示素材的一句使用，避免连续重复展示。
+选择素材时必须综合参考 description、main_content、recommended_scenes 和 disabled_scenes。若违反 disabled_scenes，即使内容相似也不得选择。连续几句话讨论同一知识点时，原则上只在最值得展示素材的一句使用，避免连续重复展示。展示时长应尽量匹配当前句子的有效信息窗口，避免无意义地覆盖下一个话题；但不得短于素材给出的最低时长。
 
-每个 sentence_id 必须且只能输出一次，顺序与输入一致。即使某句没有可用 keywords，也必须返回该句并令 use_asset=false。每句话最多一个素材、一个 target_word。target_word 必须来自该句 keywords 的 word，asset_id 必须来自 asset_index。不得新增、修改或删除素材、关键词或句子。当没有明确合适素材时，use_asset=false，asset_id 和 target_word 为 null。
+每个 sentence_id 必须且只能输出一次，顺序与输入一致。即使某句没有可用 keywords，也必须返回该句并令 use_asset=false。每句话最多一个素材、一个 target_word。target_word 必须来自该句 keywords 的 word，asset_id 必须来自 asset_index。不得新增、修改或删除素材、关键词或句子。当没有明确合适素材时，use_asset=false，asset_id、target_word 和 duration_seconds 为 null。
 
 仅输出合法 JSON，不输出 Markdown 或额外文字：
-{"results":[{"sentence_id":15,"use_asset":true,"asset_id":"asset_041_avoid_fried_food","target_word":"油炸食品","confidence":0.98,"reason":"素材能够直接帮助观众理解应减少油炸食品摄入。"},{"sentence_id":16,"use_asset":false,"asset_id":null,"target_word":null,"confidence":0.99,"reason":"没有能够明显提升理解的视觉素材。"}]}
+{"results":[{"sentence_id":15,"use_asset":true,"asset_id":"asset_041_avoid_fried_food","target_word":"油炸食品","duration_seconds":1.2,"confidence":0.98,"reason":"素材能够直接帮助观众理解应减少油炸食品摄入，需要短暂辨识画面。"},{"sentence_id":16,"use_asset":false,"asset_id":null,"target_word":null,"duration_seconds":null,"confidence":0.99,"reason":"没有能够明显提升理解的视觉素材。"}]}
 """.strip()
 
 
@@ -62,15 +65,24 @@ def _config_path() -> Path:
     return next((path for path in _CONFIG_FILES if path.is_file()), _CONFIG_FILES[0])
 
 
-def _asset_duration_seconds(item: dict, is_gif: bool) -> float:
-    """Use the index duration only for GIFs; images are intentionally brief flashes."""
-    if not is_gif:
-        return _STATIC_IMAGE_DURATION_SECONDS
+def _minimum_display_duration_seconds(item: dict, is_gif: bool) -> float:
+    """Read the asset-configured minimum display duration with sensible legacy fallbacks."""
+    default = 3.0 if is_gif else _STATIC_IMAGE_MIN_DURATION_SECONDS
     try:
-        duration = float(item.get("duration_seconds", 3.0))
+        duration = float(item.get("duration_seconds", default))
     except (TypeError, ValueError):
-        duration = 3.0
+        duration = default
     return max(0.04, duration)
+
+
+def _selected_display_duration_seconds(item: dict, requested: object) -> float:
+    is_gif = item.get("media_type") == "animated_gif"
+    minimum = _minimum_display_duration_seconds(item, is_gif)
+    try:
+        selected = float(requested)
+    except (TypeError, ValueError):
+        selected = minimum
+    return max(minimum, min(_MAX_DISPLAY_DURATION_SECONDS, selected))
 
 
 def _normalise_asset(item: dict) -> dict:
@@ -86,7 +98,7 @@ def _normalise_asset(item: dict) -> dict:
     width = metadata.get("width") or (int(size_match.group(1)) if size_match else None)
     height = metadata.get("height") or (int(size_match.group(2)) if size_match else None)
     is_gif = extension == ".gif" or item.get("media_type") == "animated_gif"
-    duration = _asset_duration_seconds(item, is_gif)
+    duration = _minimum_display_duration_seconds(item, is_gif)
     return {
         **item,
         "file_name": file_name,
@@ -124,8 +136,8 @@ def _asset_config() -> dict:
             "selection_rules": {
                 "allow_no_asset": True,
                 "max_assets_per_sentence": 1,
-                "static_image_duration_seconds": _STATIC_IMAGE_DURATION_SECONDS,
-                "animated_gif_duration": "Use the configured real duration_seconds exactly.",
+                "duration_seconds": "Each asset duration_seconds is its minimum display duration.",
+                "static_image_minimum_duration_seconds": _STATIC_IMAGE_MIN_DURATION_SECONDS,
             },
             "assets": [_normalise_asset(item) for item in data if isinstance(item, dict)],
         }
@@ -268,14 +280,20 @@ def select_visual_assets(
             "purpose": config.get("purpose", ""),
             "selection_rules": config.get("selection_rules", {}),
             "rendering_policy": {
-                "image": "Static images are brief 0.2-second flashes.",
-                "animated_gif": "Animated GIFs play for the exact duration_seconds in their asset definition.",
-                "model_output": "Do not output duration_seconds or rendering settings.",
+                "asset_duration_seconds": "The configured duration_seconds is a minimum, not a fixed length.",
+                "model_output": "For use_asset=true, output a semantic display duration_seconds no shorter than the selected asset minimum.",
+                "backend_guardrail": "The backend preserves the configured minimum and caps one visual placement at 12 seconds.",
             },
             "assets": assets,
         },
         "sentences": [
-            {"sentence_id": item["sentence_id"], "text": item["text"], "keywords": item["keywords"]}
+            {
+                "sentence_id": item["sentence_id"],
+                "start": item["start"],
+                "end": item["end"],
+                "text": item["text"],
+                "keywords": item["keywords"],
+            }
             for item in sentences
         ],
     }
@@ -334,10 +352,7 @@ def select_visual_assets(
             )
             continue
         definition = get_visual_asset_definition(asset_id)
-        duration = _asset_duration_seconds(
-            definition,
-            definition.get("media_type") == "animated_gif",
-        )
+        duration = _selected_display_duration_seconds(definition, result.get("duration_seconds"))
         clean.append({
             "sentence_id": sentence_id,
             "asset_id": asset_id,
