@@ -14,6 +14,23 @@ OUTPUT_VIDEO_CSS = """
 #generated-video { max-width: 640px; margin-left: auto; margin-right: auto; }
 #generated-video video { max-height: 360px; object-fit: contain; }
 .task-progress { min-width: 0; }
+#clip-count-toggle {
+  min-width: 24px !important;
+  width: 24px !important;
+  height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: #777 !important;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  opacity: 0.22;
+}
+#clip-count-toggle:hover, #clip-count-toggle:focus-visible {
+  background: #eceff1 !important;
+  opacity: 0.9;
+}
 @media (max-width: 640px) {
   #generated-video video { max-height: 280px; }
 }
@@ -296,7 +313,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
         subtitle_button = gr.Button("1. 生成字幕", variant="primary")
         highlight_button = gr.Button("2. 洗稿、提取高光与关键词")
         video_button = gr.Button("3. 生成视频")
-        clip_count_toggle_button = gr.Button("设置最大输出视频数量")
+        clip_count_toggle_button = gr.Button("...", size="sm", elem_id="clip-count-toggle")
         resume_button = gr.Button("恢复/查询任务")
     with gr.Row():
         asr_progress = gr.Slider(label="字幕生成进度", minimum=0, maximum=100, value=0, step=1, interactive=False, elem_classes="task-progress")
