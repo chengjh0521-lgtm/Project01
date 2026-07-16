@@ -12,6 +12,7 @@ from pathlib import Path
 
 from funclip_loader import get_launch
 from subtitle_processing.sound_effect_binding import resolve_sound_effect_file
+from subtitle_processing.visual_asset_binding import get_visual_asset_definition, resolve_visual_asset_file
 
 
 def _escape_filter_path(path: Path) -> str:
@@ -109,6 +110,122 @@ def _sound_effect_events(clip_srt: str, sound_bindings: str | None) -> list[dict
 def describe_sound_effect_events(clip_srt: str, sound_bindings: str | None) -> list[dict]:
     """Return the exact serializable sound-effect placements used by FFmpeg."""
     return _sound_effect_events(clip_srt, sound_bindings)
+
+
+def _parse_visual_bindings(value: str | None) -> list[dict]:
+    try:
+        payload = json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return []
+    placements = payload.get("placements", []) if isinstance(payload, dict) else []
+    return [item for item in placements if isinstance(item, dict) and isinstance(item.get("asset_id"), str)]
+
+
+def _visual_asset_events(clip_srt: str, visual_bindings: str | None) -> list[dict]:
+    bindings = _parse_visual_bindings(visual_bindings)
+    events = []
+    for sentence_id, (start, end, subtitle_text) in enumerate(_parse_srt_cues(clip_srt), start=1):
+        start_ms, end_ms = _time_to_ms(start), _time_to_ms(end)
+        compact = subtitle_text.replace("\n", "")
+        for placement in bindings:
+            bound_sentence_id = placement.get("sentence_id")
+            if isinstance(bound_sentence_id, str) and bound_sentence_id.isdigit():
+                bound_sentence_id = int(bound_sentence_id)
+            if bound_sentence_id != sentence_id:
+                continue
+            target_word, asset_id = str(placement.get("target_word", "")), placement["asset_id"]
+            word_index = compact.find(target_word)
+            asset_file, definition = resolve_visual_asset_file(asset_id), get_visual_asset_definition(asset_id)
+            if word_index < 0 or asset_file is None or not definition:
+                continue
+            try:
+                duration = float(placement.get("duration_seconds", 2.0))
+            except (TypeError, ValueError):
+                duration = 2.0
+            offset = start_ms + round((end_ms - start_ms) * word_index / max(1, len(compact)))
+            technical = definition.get("technical_metadata") if isinstance(definition.get("technical_metadata"), dict) else {}
+            events.append({
+                "offset_ms": offset,
+                "timestamp": _format_timestamp(offset),
+                "duration_seconds": max(0.5, min(5.0, duration)),
+                "asset_id": asset_id,
+                "asset_file": asset_file.name,
+                "media_type": definition.get("media_type", "image"),
+                "requires_chroma_key": bool(technical.get("requires_chroma_key")),
+                "position": placement.get("position", "upper_right"),
+                "target_word": target_word,
+                "subtitle": subtitle_text,
+                "reason": str(placement.get("reason", "")),
+                "sentence_id": sentence_id,
+            })
+    return events
+
+
+def describe_visual_asset_events(clip_srt: str, visual_bindings: str | None) -> list[dict]:
+    """Return serializable GIF/PNG placements using the same timing as rendering."""
+    return _visual_asset_events(clip_srt, visual_bindings)
+
+
+def _visual_position(position: str) -> tuple[str, str]:
+    positions = {
+        "upper_left": ("36", "72"),
+        "upper_right": ("W-w-36", "72"),
+        "top_center": ("(W-w)/2", "72"),
+        "middle_left": ("36", "H*0.40-h/2"),
+        "middle_right": ("W-w-36", "H*0.40-h/2"),
+    }
+    return positions.get(position, positions["upper_right"])
+
+
+def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_bindings: str | None) -> tuple[str, int]:
+    events = _visual_asset_events(clip_srt, visual_bindings)
+    if not events:
+        return str(video_path), 0
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        logging.warning("FFmpeg is unavailable; skipping %d visual assets.", len(events))
+        return str(video_path), 0
+    source = Path(video_path).resolve()
+    output = source.with_name("{}_visual{}".format(source.stem, source.suffix))
+    command = [ffmpeg, "-y", "-i", str(source)]
+    filters, previous = [], "0:v"
+    for index, event in enumerate(events, start=1):
+        asset_file = resolve_visual_asset_file(str(event["asset_id"]))
+        if asset_file is None:
+            continue
+        duration = float(event["duration_seconds"])
+        if event["media_type"] == "animated_gif":
+            command.extend(["-stream_loop", "-1", "-i", str(asset_file)])
+        else:
+            command.extend(["-loop", "1", "-t", "{:.3f}".format(duration), "-i", str(asset_file)])
+        asset_label, output_label = "asset{}".format(index), "visual{}".format(index)
+        asset_filter = "[{}:v]fps=15,scale=260:-1,format=rgba".format(index)
+        if event["requires_chroma_key"]:
+            asset_filter += ",chromakey=0x00FF00:0.16:0.08"
+        asset_filter += ",trim=duration={:.3f},setpts=PTS-STARTPTS+{:.3f}/TB[{}]".format(
+            duration, int(event["offset_ms"]) / 1000, asset_label
+        )
+        x, y = _visual_position(str(event["position"]))
+        filters.extend([
+            asset_filter,
+            "[{}][{}]overlay=x={}:y={}:eof_action=pass:shortest=0[{}]".format(
+                previous, asset_label, x, y, output_label
+            ),
+        ])
+        previous = output_label
+    if previous == "0:v":
+        return str(video_path), 0
+    command.extend([
+        "-filter_complex", ";".join(filters), "-map", "[{}]".format(previous), "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "copy",
+        "-movflags", "+faststart", str(output),
+    ])
+    completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
+    if completed.returncode:
+        logging.warning("Visual-asset overlay failed; returning captioned video: %s", completed.stderr[-1000:])
+        return str(video_path), 0
+    logging.warning("Overlay %d GIF/PNG visual assets into %s", len(events), output)
+    return str(output), len(events)
 
 
 def _mix_sound_effects(video_path: str | Path, clip_srt: str, sound_bindings: str | None) -> tuple[str, int]:
@@ -276,6 +393,7 @@ def render_highlight_video(
         burn_subtitles: bool = True,
         keywords: str | None = None,
         sound_bindings: str | None = None,
+        visual_bindings: str | None = None,
         start_offset_ms: int = 0,
         end_offset_ms: int = 100):
     """Render LLM timestamp ranges. Returns video, audio, message, and clip SRT."""
@@ -291,8 +409,11 @@ def render_highlight_video(
         if video is None:
             return video, audio, message, clip_srt
         captioned_video = _burn_srt_with_ffmpeg(video, clip_srt, keywords)
-        final_video, sound_count = _mix_sound_effects(captioned_video, clip_srt, sound_bindings)
-        return final_video, audio, "{}; burned subtitles via FFmpeg; {} sound effects mixed".format(message, sound_count), clip_srt
+        visual_video, visual_count = _overlay_visual_assets(captioned_video, clip_srt, visual_bindings)
+        final_video, sound_count = _mix_sound_effects(visual_video, clip_srt, sound_bindings)
+        return final_video, audio, "{}; burned subtitles via FFmpeg; {} GIF/PNG assets overlaid; {} sound effects mixed".format(
+            message, visual_count, sound_count
+        ), clip_srt
     return launch.AI_clip(
         llm_result, "", "", start_offset_ms, end_offset_ms,
         video_state, None, str(output_dir),

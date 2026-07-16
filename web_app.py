@@ -66,7 +66,7 @@ from subtitle_processing.sound_effect_binding import (
     list_sound_effects,
     save_effect_details,
 )
-from video_generation import describe_sound_effect_events, render_highlight_video
+from video_generation import describe_sound_effect_events, describe_visual_asset_events, render_highlight_video
 from background_jobs import JOBS
 
 
@@ -118,8 +118,8 @@ def resolve_library_video(selected_video):
     return str(candidate)
 
 
-def write_sound_effect_logic(video_path, clip_srt, sound_bindings, clip_id, ranges=None):
-    """Persist the exact cue positions used by the FFmpeg sound-effect mix."""
+def write_sound_effect_logic(video_path, clip_srt, sound_bindings, clip_id, ranges=None, visual_bindings=None):
+    """Persist the exact sound and visual placements used by the renderer."""
     SOUND_LOGIC_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     source = Path(video_path)
     payload = {
@@ -128,6 +128,7 @@ def write_sound_effect_logic(video_path, clip_srt, sound_bindings, clip_id, rang
         "clip_id": str(clip_id),
         "highlight_ranges": ranges or [],
         "sound_effect_events": describe_sound_effect_events(clip_srt, sound_bindings),
+        "visual_asset_events": describe_visual_asset_events(clip_srt, visual_bindings),
     }
     filename = "{}_{}_sound_effect_logic.json".format(
         source.stem, datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -205,12 +206,21 @@ def submit_render(llm_result, video_state, keywords, sound_bindings):
             for index, clip in enumerate(llm_result["clips"], start=1):
                 ranges = "\n".join("[{}-{}]".format(start, end) for start, end in clip["ranges"])
                 video, _, _, clip_srt = render_highlight_video(
-                    ranges, video_state, keywords=clip["keywords"], sound_bindings=clip["sound_bindings"]
+                    ranges,
+                    video_state,
+                    keywords=clip["keywords"],
+                    sound_bindings=clip["sound_bindings"],
+                    visual_bindings=clip.get("visual_bindings"),
                 )
                 if video:
                     videos.append(video)
                     logic_files.append(write_sound_effect_logic(
-                        video, clip_srt, clip["sound_bindings"], clip["id"], clip["ranges"]
+                        video,
+                        clip_srt,
+                        clip["sound_bindings"],
+                        clip["id"],
+                        clip["ranges"],
+                        clip.get("visual_bindings"),
                     ))
                 report("阶段 1/1：已完成 {}/{} 条视频。".format(index, len(llm_result["clips"])), round(index * 100 / len(llm_result["clips"])))
             return {"video": videos, "sound_logic": logic_files}
@@ -303,7 +313,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     keyword_output = gr.Textbox(label="高光关键词", lines=6)
     sound_bindings_output = gr.State()
     video_output = gr.File(label="输出视频（可多条下载）", file_count="multiple")
-    sound_logic_output = gr.File(label="音效添加逻辑（JSON，可下载）", file_count="multiple")
+    sound_logic_output = gr.File(label="音效与 GIF/PNG 添加逻辑（JSON，可下载）", file_count="multiple")
     video_state = gr.State()
     llm_result_state = gr.State()
     job_state = gr.State()

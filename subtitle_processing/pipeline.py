@@ -12,6 +12,7 @@ import urllib.request
 
 from subtitle_processing.local_correction_engine import correct_srt as correct_srt_like_local_script
 from subtitle_processing.sound_effect_binding import select_sound_cues
+from subtitle_processing.visual_asset_binding import select_visual_assets
 from subtitle_processing.multi_highlight_stage import select_multiple
 from subtitle_processing.keyword_stage import select_keywords as select_keywords_for_clip
 from subtitle_processing.correction_stage import run as run_correction_stage
@@ -589,10 +590,10 @@ def process_subtitles(
 def process_multiple_subtitles(
         srt_text: str, api_key: str, keyword_count: int, clip_count: int,
         video_state=None, model: str | None = None, status_callback=None):
-    """Four-stage batch pipeline. Each candidate owns its ranges, keywords and SFX."""
+    """Five-stage batch pipeline. Each candidate owns its ranges, keywords, SFX and visuals."""
     selected_model = model or os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-v4-flash")
     if status_callback:
-        status_callback("阶段 1/4：正在校对字幕。")
+        status_callback("阶段 1/5：正在校对字幕。")
     corrected_srt = run_correction_stage(
         srt_text, lambda source: correct_srt(source, api_key, selected_model, status_callback)
     )
@@ -620,9 +621,27 @@ def process_multiple_subtitles(
                 system, user, content, key, chosen_model, "sound-effect stage", json_response=True
             ),
         )
-        candidate.update({"highlight_srt": highlight_srt, "keywords": keywords, "sound_bindings": sound_bindings})
         if status_callback:
-            status_callback("阶段 3-4/4：已完成第 {} / {} 条素材的关键词与音效。".format(index, len(candidates)))
+            status_callback("阶段 5/5：正在为第 {} / {} 条素材选择 GIF/PNG。".format(index, len(candidates)))
+        try:
+            visual_bindings = select_visual_assets(
+                highlight_srt, keywords, api_key, selected_model,
+                lambda system, user, content, key, chosen_model: _call_deepseek(
+                    system, user, content, key, chosen_model, "visual-asset stage", json_response=True
+                ),
+            )
+        except Exception as exc:
+            logging.exception("字幕处理阶段 5/5：视觉素材选择失败。")
+            visual_bindings = '{"placements": []}'
+            logging.warning("字幕处理阶段 5/5：忽略视觉素材选择错误：%s", exc)
+        candidate.update({
+            "highlight_srt": highlight_srt,
+            "keywords": keywords,
+            "sound_bindings": sound_bindings,
+            "visual_bindings": visual_bindings,
+        })
+        if status_callback:
+            status_callback("阶段 3-5/5：已完成第 {} / {} 条素材的关键词、音效与 GIF/PNG 选择。".format(index, len(candidates)))
     display = "\n\n".join(
         "素材 {}：\n{}".format(index, candidate["raw_result"])
         for index, candidate in enumerate(candidates, start=1)

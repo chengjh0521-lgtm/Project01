@@ -115,7 +115,7 @@ def select_multiple(
             "如果无法提取合规的新素材，返回 {{\"ranges\":[]}}。"
         ).format(corrected_srt, previous)
         if report:
-            report("阶段 2/4：正在提取第 {} 条低重合高光候选。".format(number))
+            report("阶段 2/5：正在提取第 {} 条低重合高光候选。".format(number))
         raw, ranges = "", []
         for attempt in range(1, 4):
             raw = call_llm(
