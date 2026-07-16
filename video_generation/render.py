@@ -180,6 +180,10 @@ def _visual_position(position: str) -> tuple[str, str]:
 def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_bindings: str | None) -> tuple[str, int]:
     events = _visual_asset_events(clip_srt, visual_bindings)
     if not events:
+        logging.warning(
+            "Visual overlay skipped: placements=%d, matched render events=0.",
+            len(_parse_visual_bindings(visual_bindings)),
+        )
         return str(video_path), 0
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:

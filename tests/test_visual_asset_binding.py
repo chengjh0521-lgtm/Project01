@@ -1,13 +1,43 @@
 import json
+import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from subtitle_processing.visual_asset_binding import build_visual_sentences, select_visual_assets
+from subtitle_processing.visual_asset_binding import _available_assets, build_visual_sentences, select_visual_assets
 from video_generation.render import describe_visual_asset_events
 
 
 class VisualAssetBindingTests(unittest.TestCase):
+    def test_updated_array_index_decodes_file_name_and_green_screen_gif(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            asset_directory = root / "assets"
+            asset_directory.mkdir()
+            (asset_directory / "7月16日.gif").write_bytes(b"GIF89a")
+            config_path = root / "picture_assets_index.json"
+            config_path.write_text(json.dumps([{
+                "id": "asset_001",
+                "file_name": "7#U670816#U65e5.gif",
+                "description": "绿幕动图，显示注意提示。",
+                "main_content": "注意文字。",
+                "recommended_scenes": "风险提醒。",
+                "disabled_scenes": "普通过渡。",
+                "size": "426x240",
+                "duration_seconds": 3,
+            }], ensure_ascii=False), encoding="utf-8")
+            with patch.dict(os.environ, {
+                "FUNCLIP_VISUAL_ASSET_CONFIG": str(config_path),
+                "FUNCLIP_VISUAL_ASSET_DIR": str(asset_directory),
+            }, clear=False):
+                assets = _available_assets()
+
+        self.assertEqual(assets[0]["file_name"], "7月16日.gif")
+        self.assertEqual(assets[0]["media_type"], "animated_gif")
+        self.assertEqual(assets[0]["duration_seconds"], 3.0)
+        self.assertTrue(assets[0]["technical_metadata"]["requires_chroma_key"])
+
     def test_visual_sentences_only_expose_present_keywords(self):
         srt = "1\n00:00:01,000 --> 00:00:04,000\nAvoid smoking.\n"
         self.assertEqual(
@@ -50,6 +80,32 @@ class VisualAssetBindingTests(unittest.TestCase):
                 "smoking", "key", "model", call_llm,
             ))
         self.assertEqual(result["placements"][0]["asset_id"], "warning")
+
+    def test_selection_keeps_valid_placement_when_model_omits_other_sentences(self):
+        available = [{"id": "warning", "file_name": "warning.png", "media_type": "image"}]
+
+        def call_llm(_system, _user, _content, _key, _model):
+            return json.dumps({"results": [{
+                "sentence_id": 1,
+                "use_asset": True,
+                "asset_id": "warning",
+                "target_word": "smoking",
+                "reason": "risk",
+            }]})
+
+        with patch("subtitle_processing.visual_asset_binding._available_assets", return_value=available), patch(
+            "subtitle_processing.visual_asset_binding._asset_config", return_value={"selection_rules": {}}
+        ), patch(
+            "subtitle_processing.visual_asset_binding.get_visual_asset_definition", return_value={"duration_seconds": 2}
+        ):
+            result = json.loads(select_visual_assets(
+                "1\n00:00:01,000 --> 00:00:04,000\nAvoid smoking.\n\n"
+                "2\n00:00:04,000 --> 00:00:07,000\nGeneral advice.\n",
+                "smoking", "key", "model", call_llm,
+            ))
+
+        self.assertEqual(len(result["placements"]), 1)
+        self.assertEqual(result["placements"][0]["sentence_id"], 1)
 
     def test_render_event_uses_selected_sentence_and_asset_metadata(self):
         bindings = json.dumps({"placements": [{

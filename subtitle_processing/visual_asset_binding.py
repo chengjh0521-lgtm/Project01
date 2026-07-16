@@ -11,30 +11,28 @@ from typing import Callable
 
 
 _ROOT = Path(__file__).resolve().parent.parent / "visual_assets"
-_CONFIG_FILE = _ROOT / "picture_for_video_asset_index.json"
+_CONFIG_FILES = (_ROOT / "picture_assets_index.json", _ROOT / "picture_for_video_asset_index.json")
 _SRT_RANGE_RE = re.compile(
     r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})"
 )
-
-POSITION_PRESETS = ("upper_left", "upper_right", "top_center", "middle_left", "middle_right")
 
 # This prompt is intentionally kept independent from audio-effect selection.
 VISUAL_ASSET_PROMPT_READY = True
 VISUAL_ASSET_SYSTEM_PROMPT = """
 你是一名专业的医学科普短视频视觉导演（Visual Asset Director）。你的职责不是为关键词分类，而是根据字幕的完整语义，决定是否需要在画面中加入视觉素材，以帮助观众更快理解当前内容。
 
-你必须依据提供的素材索引（picture_for_video_asset_index.json）完成所有判断，不允许凭空创造素材或修改素材定义。
+你必须依据提供的素材索引（picture_assets_index.json）完成所有判断，不允许凭空创造素材或修改素材定义。
 
-输入包含 asset_index 和 sentences。asset_index 中每个素材包含 id、file_name、media_type、description_and_main_content、recommended_scenes、forbidden_scenes 和 technical_metadata。description_and_main_content 表示素材真正表达的内容；recommended_scenes 是推荐使用语义；forbidden_scenes 为强约束，必须严格遵守；technical_metadata 仅用于后续烧录，不参与素材优先级判断。
+输入包含 asset_index 和 sentences。asset_index 中每个素材包含 id、file_name、description、main_content、recommended_scenes、disabled_scenes、size 和 duration_seconds。description 与 main_content 表示素材真正表达的内容；recommended_scenes 是推荐使用语义；disabled_scenes 为强约束，必须严格遵守。部分素材还会带 media_type 和 technical_metadata，它们仅用于后续烧录，不参与素材优先级判断。
 
 sentences 中每项包含 sentence_id、text 和 keywords。keywords 仅用于定位素材出现的位置，真正的判断依据始终是整句话。请逐句分析：判断是否值得加入视觉素材；若需要，从 asset_index 中选择一个最合适的素材；并从该句 keywords 中选择一个关键词作为绑定位置。若没有合适素材，则不使用素材。
 
 先理解句子，再选择素材。素材应该帮助观众理解句子的核心信息，而不是仅仅对应某个名词。例如“糖尿病患者最好少吃油炸食品”应展示油炸食品素材，而不是糖尿病素材。只有当素材能明显提升理解效率时才使用：明确实物、人体器官或疾病示意图、生活方式、容易视觉化的医学概念，或需要重点提醒的结论。普通连接句、过渡句、寒暄、抽象推理、没有明确视觉对应物的内容通常不用素材。宁可不用，也不要强行选择。
 
-选择素材时必须综合参考 description_and_main_content、recommended_scenes 和 forbidden_scenes。若违反 forbidden_scenes，即使内容相似也不得选择。连续几句话讨论同一知识点时，原则上只在最值得展示素材的一句使用，避免连续重复展示。
+选择素材时必须综合参考 description、main_content、recommended_scenes 和 disabled_scenes。若违反 disabled_scenes，即使内容相似也不得选择。连续几句话讨论同一知识点时，原则上只在最值得展示素材的一句使用，避免连续重复展示。
 
-每个 sentence_id 必须且只能输出一次，顺序与输入一致。每句话最多一个素材、一个 target_word。target_word 必须来自该句 keywords 的 word，asset_id 必须来自 asset_index。不得新增、修改或删除素材、关键词或句子。当没有明确合适素材时，use_asset=false，asset_id 和 target_word 为 null。
+每个 sentence_id 必须且只能输出一次，顺序与输入一致。即使某句没有可用 keywords，也必须返回该句并令 use_asset=false。每句话最多一个素材、一个 target_word。target_word 必须来自该句 keywords 的 word，asset_id 必须来自 asset_index。不得新增、修改或删除素材、关键词或句子。当没有明确合适素材时，use_asset=false，asset_id 和 target_word 为 null。
 
 仅输出合法 JSON，不输出 Markdown 或额外文字：
 {"results":[{"sentence_id":15,"use_asset":true,"asset_id":"asset_041_avoid_fried_food","target_word":"油炸食品","confidence":0.98,"reason":"素材能够直接帮助观众理解应减少油炸食品摄入。"},{"sentence_id":16,"use_asset":false,"asset_id":null,"target_word":null,"confidence":0.99,"reason":"没有能够明显提升理解的视觉素材。"}]}
@@ -46,13 +44,79 @@ def visual_asset_directory() -> Path:
     return Path(configured).expanduser() if configured else _ROOT / "files"
 
 
+def _decode_file_name(value: str) -> str:
+    """Decode the #U4E2D-style file names used by the updated asset index."""
+    return re.sub(r"#U([0-9A-Fa-f]{4})", lambda match: chr(int(match.group(1), 16)), str(value or ""))
+
+
+def _config_path() -> Path:
+    configured = os.environ.get("FUNCLIP_VISUAL_ASSET_CONFIG")
+    if configured:
+        path = Path(configured).expanduser()
+        if path.is_file():
+            return path
+        logging.warning("Configured visual asset index is missing, falling back: %s", path)
+    return next((path for path in _CONFIG_FILES if path.is_file()), _CONFIG_FILES[0])
+
+
+def _normalise_asset(item: dict) -> dict:
+    """Expose both generations of the index through the current field contract."""
+    raw_file_name = str(item.get("file_name", ""))
+    file_name = _decode_file_name(raw_file_name)
+    description = str(item.get("description") or item.get("description_and_main_content") or "").strip()
+    main_content = str(item.get("main_content") or "").strip()
+    combined_description = "\n".join(part for part in (description, main_content) if part)
+    extension = Path(file_name).suffix.lower()
+    metadata = item.get("technical_metadata") if isinstance(item.get("technical_metadata"), dict) else {}
+    size_match = re.fullmatch(r"\s*(\d+)\s*[xX]\s*(\d+)\s*", str(item.get("size", "")))
+    width = metadata.get("width") or (int(size_match.group(1)) if size_match else None)
+    height = metadata.get("height") or (int(size_match.group(2)) if size_match else None)
+    try:
+        duration = float(item.get("duration_seconds", 3.0))
+    except (TypeError, ValueError):
+        duration = 3.0
+    is_gif = extension == ".gif" or item.get("media_type") == "animated_gif"
+    return {
+        **item,
+        "file_name": file_name,
+        "raw_file_name": raw_file_name,
+        "media_type": "animated_gif" if is_gif else str(item.get("media_type") or "image"),
+        "description": description,
+        "main_content": main_content,
+        "description_and_main_content": combined_description,
+        "recommended_scenes": str(item.get("recommended_scenes") or ""),
+        "disabled_scenes": str(item.get("disabled_scenes") or item.get("forbidden_scenes") or ""),
+        "forbidden_scenes": str(item.get("forbidden_scenes") or item.get("disabled_scenes") or ""),
+        "size": str(item.get("size") or "{}x{}".format(width or "", height or "")),
+        "duration_seconds": max(0.5, min(6.0, duration)),
+        "technical_metadata": {
+            "width": width,
+            "height": height,
+            "frame_count": metadata.get("frame_count"),
+            "has_transparency": bool(metadata.get("has_transparency")) or extension in {".png", ".gif"},
+            "requires_chroma_key": bool(metadata.get("requires_chroma_key")) or (is_gif and "绿幕" in combined_description),
+        },
+    }
+
+
 def _asset_config() -> dict:
-    path = Path(os.environ.get("FUNCLIP_VISUAL_ASSET_CONFIG", _CONFIG_FILE))
+    path = _config_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        logging.warning("Visual asset index is unreadable: %s", path)
         return {}
-    return data if isinstance(data, dict) and isinstance(data.get("assets"), list) else {}
+    if isinstance(data, list):
+        return {
+            "schema_version": "array-index",
+            "purpose": "Medical short-video visual asset index",
+            "selection_rules": {"allow_no_asset": True, "max_assets_per_sentence": 1},
+            "assets": [_normalise_asset(item) for item in data if isinstance(item, dict)],
+        }
+    if isinstance(data, dict) and isinstance(data.get("assets"), list):
+        return {**data, "assets": [_normalise_asset(item) for item in data["assets"] if isinstance(item, dict)]}
+    logging.warning("Visual asset index has no supported assets array: %s", path)
+    return {}
 
 
 def _configured_assets() -> list[dict]:
@@ -65,11 +129,13 @@ def resolve_visual_asset_file(asset_id: str) -> Path | None:
     item = next((candidate for candidate in _configured_assets() if candidate.get("id") == asset_id), None)
     if not item:
         return None
-    file_name = str(item.get("file_name", ""))
-    if not file_name or Path(file_name).name != file_name:
-        return None
-    path = visual_asset_directory() / file_name
-    return path if path.is_file() else None
+    for file_name in dict.fromkeys((str(item.get("file_name", "")), str(item.get("raw_file_name", "")))):
+        if not file_name or Path(file_name).name != file_name:
+            continue
+        path = visual_asset_directory() / file_name
+        if path.is_file():
+            return path
+    return None
 
 
 def get_visual_asset_definition(asset_id: str) -> dict:
@@ -80,17 +146,23 @@ def get_visual_asset_definition(asset_id: str) -> dict:
 
 def _available_assets() -> list[dict]:
     assets = []
-    for item in _configured_assets():
+    configured_assets = _configured_assets()
+    for item in configured_assets:
         if resolve_visual_asset_file(str(item["id"])) is None:
             continue
         metadata = item.get("technical_metadata") if isinstance(item.get("technical_metadata"), dict) else {}
         assets.append({
             "id": item["id"],
             "file_name": item.get("file_name", ""),
+            "description": item.get("description", ""),
+            "main_content": item.get("main_content", ""),
             "media_type": item.get("media_type", "image"),
             "description_and_main_content": item.get("description_and_main_content", ""),
             "recommended_scenes": item.get("recommended_scenes", ""),
+            "disabled_scenes": item.get("disabled_scenes", ""),
             "forbidden_scenes": item.get("forbidden_scenes", ""),
+            "size": item.get("size", ""),
+            "duration_seconds": item.get("duration_seconds", 3.0),
             "technical_metadata": {
                 "width": metadata.get("width"),
                 "height": metadata.get("height"),
@@ -99,6 +171,10 @@ def _available_assets() -> list[dict]:
                 "requires_chroma_key": bool(metadata.get("requires_chroma_key")),
             },
         })
+    logging.warning(
+        "Visual asset availability: %d/%d files matched; config=%s; directory=%s",
+        len(assets), len(configured_assets), _config_path(), visual_asset_directory(),
+    )
     return assets
 
 
@@ -164,6 +240,10 @@ def select_visual_assets(
     if not VISUAL_ASSET_PROMPT_READY:
         return '{"placements": []}'
     if not assets or not sentences or not api_key:
+        logging.warning(
+            "Visual asset stage skipped: assets=%d, sentences=%d, api_key=%s.",
+            len(assets), len(sentences), bool(api_key),
+        )
         return '{"placements": []}'
     config = _asset_config()
     request = {
@@ -185,6 +265,7 @@ def select_visual_assets(
         api_key,
         model,
     )
+    logging.warning("Visual asset stage raw response (%d chars):\n%s", len(raw), raw)
     try:
         payload = json.loads(raw.strip())
         results = payload.get("results", []) if isinstance(payload, dict) else []
@@ -192,20 +273,33 @@ def select_visual_assets(
         results = []
     sentence_by_id = {item["sentence_id"]: item for item in sentences}
     valid_assets = {item["id"] for item in assets}
-    clean, used_sentences = [], set()
-    if not isinstance(results, list) or len(results) != len(sentences):
-        logging.warning("Visual-asset stage rejected: expected %d sentence results, received %d.", len(sentences), len(results) if isinstance(results, list) else 0)
+    if not isinstance(results, list):
+        logging.warning("Visual-asset stage rejected: model response has no results array.")
         return '{"placements": []}'
-    for expected_sentence_id, result in zip((item["sentence_id"] for item in sentences), results):
+    result_by_sentence = {}
+    for result in results:
         if not isinstance(result, dict):
-            return '{"placements": []}'
+            continue
         sentence_id = result.get("sentence_id")
         if isinstance(sentence_id, str) and sentence_id.isdigit():
             sentence_id = int(sentence_id)
-        sentence = sentence_by_id.get(sentence_id)
-        if sentence_id != expected_sentence_id or not sentence or sentence_id in used_sentences:
-            return '{"placements": []}'
-        used_sentences.add(sentence_id)
+        if sentence_id not in sentence_by_id or sentence_id in result_by_sentence:
+            logging.warning("Visual-asset stage ignored an invalid or duplicate sentence_id: %r", sentence_id)
+            continue
+        result_by_sentence[sentence_id] = result
+
+    if len(result_by_sentence) != len(sentences):
+        logging.warning(
+            "Visual-asset stage returned %d/%d sentence decisions; omitted decisions will not receive an asset.",
+            len(result_by_sentence), len(sentences),
+        )
+
+    clean = []
+    for sentence in sentences:
+        sentence_id = sentence["sentence_id"]
+        result = result_by_sentence.get(sentence_id)
+        if result is None:
+            continue
         if not result.get("use_asset"):
             continue
         asset_id, target_word = result.get("asset_id"), result.get("target_word")
@@ -213,15 +307,22 @@ def select_visual_assets(
         if (
             asset_id not in valid_assets or not isinstance(target_word, str) or target_word not in sentence_words
         ):
-            return '{"placements": []}'
+            logging.warning(
+                "Visual-asset stage ignored invalid placement for sentence %d: asset=%r, word=%r.",
+                sentence_id, asset_id, target_word,
+            )
+            continue
         definition = get_visual_asset_definition(asset_id)
-        media_type = definition.get("media_type", "image")
+        try:
+            duration = float(definition.get("duration_seconds", 3.0))
+        except (TypeError, ValueError):
+            duration = 3.0
         clean.append({
             "sentence_id": sentence_id,
             "asset_id": asset_id,
             "target_word": target_word,
             "position": "upper_right",
-            "duration_seconds": 1.8 if media_type == "animated_gif" else 2.5,
+            "duration_seconds": max(0.5, min(6.0, duration)),
             "reason": str(result.get("reason", ""))[:160],
         })
     return json.dumps({"placements": clean}, ensure_ascii=False, indent=2)
