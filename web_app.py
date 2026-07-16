@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+from datetime import datetime
 from pathlib import Path
 
 import gradio as gr
@@ -47,11 +49,12 @@ from subtitle_processing.sound_effect_binding import (
     list_sound_effects,
     save_effect_details,
 )
-from video_generation import render_highlight_video
+from video_generation import describe_sound_effect_events, render_highlight_video
 from background_jobs import JOBS
 
 
 VIDEO_LIBRARY_DIR = Path(__file__).resolve().parent / "subtitle_generation" / "pending_videos"
+SOUND_LOGIC_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "sound_effect_logic"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 
 
@@ -98,6 +101,25 @@ def resolve_library_video(selected_video):
     return str(candidate)
 
 
+def write_sound_effect_logic(video_path, clip_srt, sound_bindings, clip_id, ranges=None):
+    """Persist the exact cue positions used by the FFmpeg sound-effect mix."""
+    SOUND_LOGIC_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    source = Path(video_path)
+    payload = {
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "video_file": source.name,
+        "clip_id": str(clip_id),
+        "highlight_ranges": ranges or [],
+        "sound_effect_events": describe_sound_effect_events(clip_srt, sound_bindings),
+    }
+    filename = "{}_{}_sound_effect_logic.json".format(
+        source.stem, datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    )
+    path = SOUND_LOGIC_OUTPUT_DIR / filename
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return str(path)
+
+
 def _skipped_outputs(count: int):
     return tuple(gr.skip() for _ in range(count))
 
@@ -115,9 +137,9 @@ def submit_generate(uploaded_video_path, library_video, hotwords):
     try:
         video_path = resolve_library_video(library_video) or uploaded_video_path
     except ValueError as exc:
-        return ("字幕生成任务未提交：{}".format(exc), *_skipped_outputs(8), "", None, *_progress_updates("asr", 0))
+        return ("字幕生成任务未提交：{}".format(exc), *_skipped_outputs(9), "", None, *_progress_updates("asr", 0))
     if not video_path:
-        return ("请上传视频，或从服务器待处理视频中选择一个文件。", *_skipped_outputs(8), "", None, *_progress_updates("asr", 0))
+        return ("请上传视频，或从服务器待处理视频中选择一个文件。", *_skipped_outputs(9), "", None, *_progress_updates("asr", 0))
 
     def worker(report):
         report("阶段 1/1：正在进行 ASR 字幕识别。", 5)
@@ -128,12 +150,12 @@ def submit_generate(uploaded_video_path, library_video, hotwords):
         return {"subtitle": srt, "video_state": video_state}
 
     job_id = JOBS.submit("asr", worker)
-    return ("字幕生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id}, *_progress_updates("asr", 0))
+    return ("字幕生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(9), job_id, {"id": job_id}, *_progress_updates("asr", 0))
 
 
 def submit_process(srt_text, api_key, keyword_count, clip_count, video_state):
     if not srt_text:
-        return ("请先生成字幕。", *_skipped_outputs(8), "", None, *_progress_updates("process", 0))
+        return ("请先生成字幕。", *_skipped_outputs(9), "", None, *_progress_updates("process", 0))
     key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
 
     def worker(report):
@@ -144,47 +166,51 @@ def submit_process(srt_text, api_key, keyword_count, clip_count, video_state):
         )
 
     job_id = JOBS.submit("process", worker)
-    return ("字幕处理已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id}, *_progress_updates("process", 0))
+    return ("字幕处理已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(9), job_id, {"id": job_id}, *_progress_updates("process", 0))
 
 
 def submit_render(llm_result, video_state, keywords, sound_bindings):
     if video_state is None:
-        return ("请先完成字幕生成和第二步处理。", *_skipped_outputs(8), "", None, *_progress_updates("render", 0))
+        return ("请先完成字幕生成和第二步处理。", *_skipped_outputs(9), "", None, *_progress_updates("render", 0))
     if not llm_result:
-        return ("请先完成第二步高光提取。", *_skipped_outputs(8), "", None, *_progress_updates("render", 0))
+        return ("请先完成第二步高光提取。", *_skipped_outputs(9), "", None, *_progress_updates("render", 0))
 
     def worker(report):
         report("阶段 1/1：正在剪辑视频并烧录字幕。", 5)
         if isinstance(llm_result, dict) and llm_result.get("clips"):
-            videos = []
+            videos, logic_files = [], []
             for index, clip in enumerate(llm_result["clips"], start=1):
                 ranges = "\n".join("[{}-{}]".format(start, end) for start, end in clip["ranges"])
-                video, _, _, _ = render_highlight_video(
+                video, _, _, clip_srt = render_highlight_video(
                     ranges, video_state, keywords=clip["keywords"], sound_bindings=clip["sound_bindings"]
                 )
                 if video:
                     videos.append(video)
+                    logic_files.append(write_sound_effect_logic(
+                        video, clip_srt, clip["sound_bindings"], clip["id"], clip["ranges"]
+                    ))
                 report("阶段 1/1：已完成 {}/{} 条视频。".format(index, len(llm_result["clips"])), round(index * 100 / len(llm_result["clips"])))
-            return {"video": videos}
-        video, _, _, _ = render_highlight_video(llm_result, video_state, keywords=keywords, sound_bindings=sound_bindings)
+            return {"video": videos, "sound_logic": logic_files}
+        video, _, _, clip_srt = render_highlight_video(llm_result, video_state, keywords=keywords, sound_bindings=sound_bindings)
         report("阶段 1/1：视频生成完成。", 100)
-        return {"video": video}
+        logic_files = [write_sound_effect_logic(video, clip_srt, sound_bindings, "clip_01")] if video else []
+        return {"video": video, "sound_logic": logic_files}
 
     job_id = JOBS.submit("render", worker)
-    return ("视频生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(8), job_id, {"id": job_id}, *_progress_updates("render", 0))
+    return ("视频生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(9), job_id, {"id": job_id}, *_progress_updates("render", 0))
 
 
 def poll_job(job_ref):
     job_id = job_ref.get("id") if isinstance(job_ref, dict) else None
     job = JOBS.get(job_id)
     if job is None:
-        return ("后台任务不存在，可能服务刚刚重启。", *_skipped_outputs(8), "", None, *_progress_updates())
+        return ("后台任务不存在，可能服务刚刚重启。", *_skipped_outputs(9), "", None, *_progress_updates())
     status = job["status"]
     prefix = "后台任务 {}：".format(job["kind"])
     if status in {"queued", "running"}:
-        return (prefix + job["message"], *_skipped_outputs(8), job_id, job_ref, *_progress_updates(job["kind"], job["progress"]))
+        return (prefix + job["message"], *_skipped_outputs(9), job_id, job_ref, *_progress_updates(job["kind"], job["progress"]))
     if status == "failed":
-        return (prefix + "失败：{}".format(job["error"] or job["message"]), *_skipped_outputs(8), job_id, None, *_progress_updates(job["kind"], job["progress"]))
+        return (prefix + "失败：{}".format(job["error"] or job["message"]), *_skipped_outputs(9), job_id, None, *_progress_updates(job["kind"], job["progress"]))
 
     result = job["result"]
     if job["kind"] == "asr":
@@ -195,6 +221,7 @@ def poll_job(job_ref):
             "",
             "",
             "",
+            None,
             None,
             None,
             None,
@@ -216,19 +243,20 @@ def poll_job(job_ref):
             sound_bindings,
             plan,
             gr.skip(),
+            gr.skip(),
             job_id,
             None,
             *_progress_updates("process", 100),
         )
     if job["kind"] == "render":
-        return (prefix + "完成。", *_skipped_outputs(7), result["video"], job_id, None, *_progress_updates("render", 100))
-    return (prefix + "完成。", *_skipped_outputs(8), job_id, None, *_progress_updates())
+        return (prefix + "完成。", *_skipped_outputs(7), result["video"], result["sound_logic"], job_id, None, *_progress_updates("render", 100))
+    return (prefix + "完成。", *_skipped_outputs(9), job_id, None, *_progress_updates())
 
 
 def resume_job(job_id):
     """Resume polling after a browser refresh using the visible job ID."""
     if not str(job_id or "").strip():
-        return ("请输入需要恢复的后台任务 ID。", *_skipped_outputs(8), "", None, *_progress_updates())
+        return ("请输入需要恢复的后台任务 ID。", *_skipped_outputs(9), "", None, *_progress_updates())
     return poll_job({"id": str(job_id).strip()})
 
 
@@ -250,6 +278,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     keyword_output = gr.Textbox(label="高光关键词", lines=6)
     sound_bindings_output = gr.State()
     video_output = gr.File(label="输出视频（可多条下载）", file_count="multiple")
+    sound_logic_output = gr.File(label="音效添加逻辑（JSON，可下载）", file_count="multiple")
     video_state = gr.State()
     llm_result_state = gr.State()
     job_state = gr.State()
@@ -287,6 +316,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             sound_bindings_output,
             llm_result_state,
             video_output,
+            sound_logic_output,
             job_id_input,
             job_state,
             asr_progress,
@@ -309,6 +339,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             sound_bindings_output,
             llm_result_state,
             video_output,
+            sound_logic_output,
             job_id_input,
             job_state,
             asr_progress,
@@ -331,6 +362,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             sound_bindings_output,
             llm_result_state,
             video_output,
+            sound_logic_output,
             job_id_input,
             job_state,
             asr_progress,
@@ -353,6 +385,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             sound_bindings_output,
             llm_result_state,
             video_output,
+            sound_logic_output,
             job_id_input,
             job_state,
             asr_progress,
@@ -394,6 +427,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             sound_bindings_output,
             llm_result_state,
             video_output,
+            sound_logic_output,
             job_id_input,
             job_state,
             asr_progress,

@@ -73,21 +73,42 @@ def _parse_sound_bindings(value: str | None) -> list[dict[str, str]]:
     return [item for item in cues if isinstance(item, dict) and isinstance(item.get("sound_id"), str)]
 
 
-def _sound_effect_events(clip_srt: str, sound_bindings: str | None) -> list[tuple[int, Path, str]]:
+def _format_timestamp(milliseconds: int) -> str:
+    hours, remainder = divmod(max(0, int(milliseconds)), 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, millis = divmod(remainder, 1_000)
+    return "{:02d}:{:02d}:{:02d},{:03d}".format(hours, minutes, seconds, millis)
+
+
+def _sound_effect_events(clip_srt: str, sound_bindings: str | None) -> list[dict]:
     bindings = _parse_sound_bindings(sound_bindings)
     events = []
-    for start, end, text in _parse_srt_cues(clip_srt):
+    for start, end, subtitle_text in _parse_srt_cues(clip_srt):
         start_ms, end_ms = _time_to_ms(start), _time_to_ms(end)
-        compact = text.replace("\n", "")
+        compact = subtitle_text.replace("\n", "")
         for cue in bindings:
-            text, effect_name = str(cue.get("text", "")), cue["sound_id"]
-            index = compact.find(text)
+            target_word, effect_name = str(cue.get("text", "")), cue["sound_id"]
+            index = compact.find(target_word)
             effect_file = resolve_sound_effect_file(effect_name)
             if index < 0 or effect_file is None:
                 continue
             offset = start_ms + round((end_ms - start_ms) * index / max(1, len(compact)))
-            events.append((offset, effect_file, text))
+            events.append({
+                "offset_ms": offset,
+                "timestamp": _format_timestamp(offset),
+                "sound_id": effect_name,
+                "sound_file": effect_file.name,
+                "target_word": target_word,
+                "subtitle": subtitle_text,
+                "reason": str(cue.get("reason", "")),
+                "sentence_id": cue.get("sentence_id"),
+            })
     return events
+
+
+def describe_sound_effect_events(clip_srt: str, sound_bindings: str | None) -> list[dict]:
+    """Return the exact serializable sound-effect placements used by FFmpeg."""
+    return _sound_effect_events(clip_srt, sound_bindings)
 
 
 def _mix_sound_effects(video_path: str | Path, clip_srt: str, sound_bindings: str | None) -> tuple[str, int]:
@@ -102,10 +123,13 @@ def _mix_sound_effects(video_path: str | Path, clip_srt: str, sound_bindings: st
     output = source.with_name("{}_sfx{}".format(source.stem, source.suffix))
     command = [ffmpeg, "-y", "-i", str(source)]
     filters, mix_inputs = [], ["[0:a]"]
-    for index, (offset, effect_file, _) in enumerate(events, start=1):
+    for index, event in enumerate(events, start=1):
+        effect_file = resolve_sound_effect_file(str(event["sound_id"]))
+        if effect_file is None:
+            continue
         command.extend(["-i", str(effect_file)])
         label = "sfx{}".format(index)
-        filters.append("[{}:a]adelay={}:all=1,volume=0.80[{}]".format(index, max(0, offset), label))
+        filters.append("[{}:a]adelay={}:all=1,volume=0.80[{}]".format(index, max(0, int(event["offset_ms"])), label))
         mix_inputs.append("[{}]".format(label))
     filters.append("{}amix=inputs={}:duration=first:normalize=0[aout]".format("".join(mix_inputs), len(mix_inputs)))
     command.extend([
