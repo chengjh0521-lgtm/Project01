@@ -136,6 +136,54 @@ class VisualAssetBindingTests(unittest.TestCase):
         self.assertEqual(len(result["placements"]), 1)
         self.assertEqual(result["placements"][0]["sentence_id"], 1)
 
+    def test_selection_retries_until_it_meets_global_visual_coverage_targets(self):
+        available = [
+            {"id": "warning", "file_name": "warning.png", "media_type": "image"},
+            {"id": "food", "file_name": "food.png", "media_type": "image"},
+        ]
+        responses = iter([
+            {"results": [{
+                "sentence_id": 1,
+                "use_asset": True,
+                "asset_id": "warning",
+                "target_word": "smoking",
+                "duration_seconds": 1.0,
+            }]},
+            {"results": [
+                {
+                    "sentence_id": 1,
+                    "use_asset": True,
+                    "asset_id": "warning",
+                    "target_word": "smoking",
+                    "duration_seconds": 2.7,
+                },
+                {
+                    "sentence_id": 2,
+                    "use_asset": True,
+                    "asset_id": "food",
+                    "target_word": "food",
+                    "duration_seconds": 2.7,
+                },
+            ]},
+        ])
+
+        def call_llm(_system, _user, _content, _key, _model):
+            return json.dumps(next(responses))
+
+        with patch("subtitle_processing.visual_asset_binding._available_assets", return_value=available), patch(
+            "subtitle_processing.visual_asset_binding._asset_config", return_value={"selection_rules": {}}
+        ), patch(
+            "subtitle_processing.visual_asset_binding.get_visual_asset_definition", return_value={"media_type": "image", "duration_seconds": 0.2}
+        ):
+            result = json.loads(select_visual_assets(
+                "1\n00:00:01,000 --> 00:00:04,000\nAvoid smoking.\n\n"
+                "2\n00:00:04,000 --> 00:00:07,000\nChoose food.\n",
+                "smoking, food", "key", "model", call_llm,
+            ))
+
+        self.assertEqual(len(result["placements"]), 2)
+        self.assertGreater(sum(item["duration_seconds"] for item in result["placements"]), 5.0)
+
     def test_render_event_uses_selected_sentence_and_asset_metadata(self):
         bindings = json.dumps({"placements": [{
             "sentence_id": 1,
