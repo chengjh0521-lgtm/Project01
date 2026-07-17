@@ -250,12 +250,10 @@ def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_binding
 def _overlay_doctor_label(video_path: str | Path) -> tuple[str, bool]:
     """Keep the doctor label visible for the full rendered clip."""
     if not _DOCTOR_LABEL_FILE.is_file():
-        logging.warning("Doctor label is missing; skipping fixed label: %s", _DOCTOR_LABEL_FILE)
-        return str(video_path), False
+        raise FileNotFoundError("Doctor label is missing: {}".format(_DOCTOR_LABEL_FILE))
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        logging.warning("FFmpeg is unavailable; skipping fixed doctor label.")
-        return str(video_path), False
+        raise RuntimeError("FFmpeg is unavailable; cannot burn the fixed doctor label.")
 
     source = Path(video_path).resolve()
     output = source.with_name("{}_label{}".format(source.stem, source.suffix))
@@ -278,8 +276,9 @@ def _overlay_doctor_label(video_path: str | Path) -> tuple[str, bool]:
     )
     completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
     if completed.returncode:
-        logging.warning("Doctor-label overlay failed; returning prior video: %s", completed.stderr[-1000:])
-        return str(video_path), False
+        error = completed.stderr[-1000:]
+        logging.error("Doctor-label overlay failed: %s", error)
+        raise RuntimeError("Doctor-label overlay failed: {}".format(error))
     logging.warning("Fixed doctor label overlaid for the full clip: %s", output)
     return str(output), True
 

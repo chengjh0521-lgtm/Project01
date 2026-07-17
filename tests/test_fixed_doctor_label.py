@@ -28,6 +28,21 @@ class FixedDoctorLabelTests(unittest.TestCase):
         self.assertIn("overlay=x=20:y=20", filters)
         self.assertIn(str(label), command)
 
+    def test_label_failure_is_not_silently_returned_as_a_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "clip.mp4"
+            label = root / "label.png"
+            source.write_bytes(b"video")
+            label.write_bytes(b"png")
+            with patch("video_generation.render._DOCTOR_LABEL_FILE", label), patch(
+                "video_generation.render.shutil.which", return_value="ffmpeg"
+            ), patch("video_generation.render.subprocess.run") as run:
+                run.return_value.returncode = 1
+                run.return_value.stderr = "FFmpeg label failure"
+                with self.assertRaisesRegex(RuntimeError, "Doctor-label overlay failed"):
+                    _overlay_doctor_label(source)
+
 
 if __name__ == "__main__":
     unittest.main()
