@@ -64,6 +64,7 @@ patch_gradio_boolean_schema()
 
 from subtitle_generation import generate_subtitles
 from subtitle_processing import process_from_corrected_subtitles, process_multiple_subtitles
+from subtitle_processing.pipeline import build_corrected_video_state
 from subtitle_processing.sound_effect_binding import (
     get_effect_details,
     list_sound_effects,
@@ -77,8 +78,45 @@ VIDEO_LIBRARY_DIR = Path(__file__).resolve().parent / "subtitle_generation" / "p
 SOUND_LOGIC_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "sound_effect_logic"
 SAVED_CORRECTED_SUBTITLE_DIR = Path(__file__).resolve().parent / "subtitle_processing" / "saved_corrected_subtitles"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
-_VIDEO_STATE_LOCK = threading.Lock()
+VIDEO_SOURCE_CONTEXT_FILE = Path(__file__).resolve().parent / "subtitle_generation" / ".latest_video_source.json"
+_VIDEO_STATE_LOCK = threading.RLock()
 _LATEST_VIDEO_STATE = None
+_LATEST_VIDEO_SOURCE = None
+
+
+def _remember_video_source(video_path) -> str | None:
+    """Persist the source path so rendering can rebuild FunClip state after a web refresh."""
+    global _LATEST_VIDEO_SOURCE
+    if not video_path:
+        return None
+    path = Path(str(video_path)).expanduser().resolve()
+    if not path.is_file():
+        logging.warning("Refusing to cache a missing source video: %s", path)
+        return None
+    with _VIDEO_STATE_LOCK:
+        _LATEST_VIDEO_SOURCE = str(path)
+    try:
+        VIDEO_SOURCE_CONTEXT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        VIDEO_SOURCE_CONTEXT_FILE.write_text(
+            json.dumps({"video_path": str(path)}, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError as exc:
+        logging.warning("Unable to persist the source video path: %s", exc)
+    logging.warning("Source video cached: %s", path)
+    return str(path)
+
+
+def _resolve_video_source() -> str | None:
+    with _VIDEO_STATE_LOCK:
+        cached = _LATEST_VIDEO_SOURCE
+    if cached and Path(cached).is_file():
+        return cached
+    try:
+        saved = json.loads(VIDEO_SOURCE_CONTEXT_FILE.read_text(encoding="utf-8"))
+        path = Path(str(saved.get("video_path", ""))).expanduser().resolve()
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    return _remember_video_source(path) if path.is_file() else None
 
 
 def _remember_video_state(video_state, source: str):
@@ -88,6 +126,8 @@ def _remember_video_state(video_state, source: str):
         return None
     with _VIDEO_STATE_LOCK:
         _LATEST_VIDEO_STATE = video_state
+    if isinstance(video_state, dict):
+        _remember_video_source(video_state.get("video_filename"))
     logging.warning("Video state cached from %s.", source)
     return video_state
 
@@ -102,6 +142,47 @@ def _resolve_video_state(video_state, source: str):
         return cached
     logging.warning("Video state is unavailable for %s.", source)
     return None
+
+
+def _corrected_srt_from_plan(plan) -> str:
+    if not isinstance(plan, dict):
+        return ""
+    corrected_srt = plan.get("corrected_srt")
+    if isinstance(corrected_srt, str) and corrected_srt.strip():
+        return corrected_srt
+    clips = plan.get("clips")
+    if isinstance(clips, list) and clips:
+        # Compatibility for plans created before corrected_srt was stored at the root.
+        return str(clips[0].get("highlight_srt", "")) if isinstance(clips[0], dict) else ""
+    return ""
+
+
+def _rebuild_video_state_for_render(plan):
+    """Recreate the small upstream state contract from a persisted video path and SRT."""
+    video_path = _resolve_video_source()
+    corrected_srt = _corrected_srt_from_plan(plan)
+    if not video_path or not corrected_srt.strip():
+        logging.warning(
+            "Cannot rebuild video state: source_video=%s, corrected_srt=%s.",
+            bool(video_path), bool(corrected_srt.strip()),
+        )
+        return None
+    try:
+        from moviepy.editor import VideoFileClip
+
+        source = Path(video_path)
+        state = {
+            "video_filename": str(source),
+            "clip_video_file": str(source.with_suffix("")) + "_clip.mp4",
+            "video": VideoFileClip(str(source)),
+        }
+        rebuilt = build_corrected_video_state(state, corrected_srt)
+    except Exception as exc:
+        logging.exception("Video-state rebuild failed.")
+        logging.warning("Unable to rebuild video state: %s", exc)
+        return None
+    logging.warning("Video state rebuilt from persisted source video and corrected SRT.")
+    return _remember_video_state(rebuilt, "render reconstruction")
 
 
 def list_library_videos():
@@ -145,6 +226,16 @@ def resolve_library_video(selected_video):
     if candidate.suffix.lower() not in VIDEO_EXTENSIONS:
         raise ValueError("所选文件不是支持的视频格式。")
     return str(candidate)
+
+
+def _remember_render_source(library_video, uploaded_video_path):
+    """Use the currently selected original video when a render needs state reconstruction."""
+    try:
+        source = resolve_library_video(library_video) or uploaded_video_path
+    except ValueError as exc:
+        logging.warning("Selected render source is invalid: %s", exc)
+        return None
+    return _remember_video_source(source)
 
 
 def list_saved_corrected_subtitles():
@@ -223,6 +314,7 @@ def submit_generate(uploaded_video_path, library_video, hotwords):
         return ("字幕生成任务未提交：{}".format(exc), *_skipped_outputs(9), "", None, *_progress_updates("asr", 0))
     if not video_path:
         return ("请上传视频，或从服务器待处理视频中选择一个文件。", *_skipped_outputs(9), "", None, *_progress_updates("asr", 0))
+    _remember_video_source(video_path)
 
     def worker(report):
         report("阶段 1/1：正在进行 ASR 字幕识别。", 5)
@@ -289,8 +381,11 @@ def submit_process_from_saved(saved_file, api_key, keyword_count, clip_count, vi
     return ("已保存字幕2处理任务已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(9), job_id, {"id": job_id}, *_progress_updates("process", 0))
 
 
-def submit_render(llm_result, video_state, keywords, sound_bindings):
+def submit_render(llm_result, video_state, keywords, sound_bindings, library_video, uploaded_video_path):
     resolved_video_state = _resolve_video_state(video_state, "rendering")
+    if resolved_video_state is None:
+        _remember_render_source(library_video, uploaded_video_path)
+        resolved_video_state = _rebuild_video_state_for_render(llm_result)
     logging.warning(
         "Render submission received: browser_video_state=%s, resolved_video_state=%s, plan=%s, keywords=%s, sound_bindings=%s.",
         video_state is not None,
@@ -300,7 +395,10 @@ def submit_render(llm_result, video_state, keywords, sound_bindings):
         bool(sound_bindings),
     )
     if resolved_video_state is None:
-        return ("请先完成字幕生成和第二步处理。", *_skipped_outputs(9), "", None, *_progress_updates("render", 0))
+        return (
+            "无法获得原视频状态。请在第一步选择服务器视频或重新上传原视频后，再点击生成视频。",
+            *_skipped_outputs(9), "", None, *_progress_updates("render", 0),
+        )
     if not llm_result:
         return ("请先完成第二步高光提取。", *_skipped_outputs(9), "", None, *_progress_updates("render", 0))
 
@@ -541,7 +639,14 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
     )
     video_button.click(
         submit_render,
-        inputs=[llm_result_state, video_state, keyword_output, sound_bindings_output],
+        inputs=[
+            llm_result_state,
+            video_state,
+            keyword_output,
+            sound_bindings_output,
+            library_video_input,
+            video_input,
+        ],
         outputs=[
             job_status,
             subtitle_output,

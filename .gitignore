@@ -10,3 +10,4 @@ sound_effects/audio/
 sound_effects/medical_sound_effects_config.json
 visual_assets/files/
 subtitle_processing/saved_corrected_subtitles/
+subtitle_generation/.latest_video_source.json

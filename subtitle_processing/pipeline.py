@@ -640,7 +640,9 @@ def _process_from_corrected_subtitles(
         "素材 {}：\n{}".format(index, candidate["raw_result"])
         for index, candidate in enumerate(candidates, start=1)
     )
-    plan = {"clips": candidates}
+    # Keep subtitle 2 with the render plan so the web layer can rebuild the
+    # upstream video state even after Gradio has dropped its hidden State.
+    plan = {"clips": candidates, "corrected_srt": corrected_srt}
     return corrected_srt, display, plan, build_corrected_video_state(video_state, corrected_srt)
 
 
