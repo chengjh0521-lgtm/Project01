@@ -15,6 +15,10 @@ from subtitle_processing.sound_effect_binding import resolve_sound_effect_file
 from subtitle_processing.visual_asset_binding import get_visual_asset_definition, resolve_visual_asset_file
 
 
+_DOCTOR_LABEL_FILE = Path(__file__).with_name("label.png")
+_DOCTOR_LABEL_WIDTH_PIXELS = 200
+
+
 def _escape_filter_path(path: Path) -> str:
     """Escape an absolute path for FFmpeg's subtitles filter."""
     return path.resolve().as_posix().replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
@@ -243,6 +247,43 @@ def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_binding
     return str(output), len(events)
 
 
+def _overlay_doctor_label(video_path: str | Path) -> tuple[str, bool]:
+    """Keep the doctor label visible for the full rendered clip."""
+    if not _DOCTOR_LABEL_FILE.is_file():
+        logging.warning("Doctor label is missing; skipping fixed label: %s", _DOCTOR_LABEL_FILE)
+        return str(video_path), False
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        logging.warning("FFmpeg is unavailable; skipping fixed doctor label.")
+        return str(video_path), False
+
+    source = Path(video_path).resolve()
+    output = source.with_name("{}_label{}".format(source.stem, source.suffix))
+    # The label is deliberately the final video filter. The looped image input
+    # keeps it present for every frame of the rendered clip.
+    filter_graph = (
+        "[1:v]scale={}:-1,format=rgba[label];"
+        "[0:v][label]overlay=x=20:y=20:eof_action=pass:repeatlast=1[outv]"
+    ).format(_DOCTOR_LABEL_WIDTH_PIXELS)
+    command = [
+        ffmpeg, "-y", "-i", str(source), "-loop", "1", "-framerate", "30", "-i", str(_DOCTOR_LABEL_FILE),
+        "-filter_complex", filter_graph,
+        "-map", "[outv]", "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:a", "copy", "-shortest", "-movflags", "+faststart", str(output),
+    ]
+    logging.warning(
+        "Burning fixed doctor label: label=%s, width=%dpx, output=%s, filter=%s",
+        _DOCTOR_LABEL_FILE, _DOCTOR_LABEL_WIDTH_PIXELS, output, filter_graph,
+    )
+    completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
+    if completed.returncode:
+        logging.warning("Doctor-label overlay failed; returning prior video: %s", completed.stderr[-1000:])
+        return str(video_path), False
+    logging.warning("Fixed doctor label overlaid for the full clip: %s", output)
+    return str(output), True
+
+
 def _mix_sound_effects(video_path: str | Path, clip_srt: str, sound_bindings: str | None) -> tuple[str, int]:
     events = _sound_effect_events(clip_srt, sound_bindings)
     if not events:
@@ -425,9 +466,10 @@ def render_highlight_video(
             return video, audio, message, clip_srt
         captioned_video = _burn_srt_with_ffmpeg(video, clip_srt, keywords)
         visual_video, visual_count = _overlay_visual_assets(captioned_video, clip_srt, visual_bindings)
-        final_video, sound_count = _mix_sound_effects(visual_video, clip_srt, sound_bindings)
-        return final_video, audio, "{}; burned subtitles via FFmpeg; {} GIF/PNG assets overlaid; {} sound effects mixed".format(
-            message, visual_count, sound_count
+        mixed_video, sound_count = _mix_sound_effects(visual_video, clip_srt, sound_bindings)
+        final_video, label_applied = _overlay_doctor_label(mixed_video)
+        return final_video, audio, "{}; burned subtitles via FFmpeg; {} GIF/PNG assets overlaid; fixed doctor label={}; {} sound effects mixed".format(
+            message, visual_count, label_applied, sound_count
         ), clip_srt
     return launch.AI_clip(
         llm_result, "", "", start_offset_ms, end_offset_ms,
