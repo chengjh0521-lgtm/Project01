@@ -6,6 +6,7 @@ import json
 import os
 import hashlib
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -76,6 +77,31 @@ VIDEO_LIBRARY_DIR = Path(__file__).resolve().parent / "subtitle_generation" / "p
 SOUND_LOGIC_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "sound_effect_logic"
 SAVED_CORRECTED_SUBTITLE_DIR = Path(__file__).resolve().parent / "subtitle_processing" / "saved_corrected_subtitles"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
+_VIDEO_STATE_LOCK = threading.Lock()
+_LATEST_VIDEO_STATE = None
+
+
+def _remember_video_state(video_state, source: str):
+    """Keep the upstream state server-side when Gradio State is lost by the browser."""
+    global _LATEST_VIDEO_STATE
+    if video_state is None:
+        return None
+    with _VIDEO_STATE_LOCK:
+        _LATEST_VIDEO_STATE = video_state
+    logging.warning("Video state cached from %s.", source)
+    return video_state
+
+
+def _resolve_video_state(video_state, source: str):
+    if video_state is not None:
+        return _remember_video_state(video_state, source)
+    with _VIDEO_STATE_LOCK:
+        cached = _LATEST_VIDEO_STATE
+    if cached is not None:
+        logging.warning("Video state missing from browser; using server-side cache for %s.", source)
+        return cached
+    logging.warning("Video state is unavailable for %s.", source)
+    return None
 
 
 def list_library_videos():
@@ -203,6 +229,7 @@ def submit_generate(uploaded_video_path, library_video, hotwords):
         text, srt, video_state, _, _, _ = generate_subtitles(
             video_path, hotwords=hotwords or ""
         )
+        _remember_video_state(video_state, "ASR")
         report("阶段 1/1：ASR 字幕识别完成。", 100)
         return {"subtitle": srt, "video_state": video_state}
 
@@ -214,6 +241,7 @@ def submit_process(srt_text, api_key, keyword_count, clip_count, video_state):
     if not srt_text:
         return ("请先生成字幕。", *_skipped_outputs(9), "", None, *_progress_updates("process", 0))
     key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+    resolved_video_state = _resolve_video_state(video_state, "subtitle processing")
 
     def worker(report):
         corrected_file = None
@@ -227,11 +255,12 @@ def submit_process(srt_text, api_key, keyword_count, clip_count, video_state):
                 logging.warning("保存字幕2失败：%s", exc)
 
         result = process_multiple_subtitles(
-            srt_text, key, keyword_count, clip_count, video_state,
+            srt_text, key, keyword_count, clip_count, resolved_video_state,
             model=os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-v4-flash"),
             status_callback=report,
             on_corrected=save_after_correction,
         )
+        _remember_video_state(result[-1], "subtitle processing")
         return {"pipeline": result, "corrected_file": corrected_file or save_corrected_subtitle(result[0])}
 
     job_id = JOBS.submit("process", worker)
@@ -245,13 +274,15 @@ def submit_process_from_saved(saved_file, api_key, keyword_count, clip_count, vi
     except (OSError, ValueError) as exc:
         return ("保存字幕任务未提交：{}".format(exc), *_skipped_outputs(9), "", None, *_progress_updates("process", 0))
     key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+    resolved_video_state = _resolve_video_state(video_state, "saved subtitle processing")
 
     def worker(report):
         result = process_from_corrected_subtitles(
-            corrected_srt, key, keyword_count, clip_count, video_state,
+            corrected_srt, key, keyword_count, clip_count, resolved_video_state,
             model=os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-v4-flash"),
             status_callback=report,
         )
+        _remember_video_state(result[-1], "saved subtitle processing")
         return {"pipeline": result, "corrected_file": str(path)}
 
     job_id = JOBS.submit("process", worker)
@@ -259,14 +290,16 @@ def submit_process_from_saved(saved_file, api_key, keyword_count, clip_count, vi
 
 
 def submit_render(llm_result, video_state, keywords, sound_bindings):
+    resolved_video_state = _resolve_video_state(video_state, "rendering")
     logging.warning(
-        "Render submission received: video_state=%s, plan=%s, keywords=%s, sound_bindings=%s.",
+        "Render submission received: browser_video_state=%s, resolved_video_state=%s, plan=%s, keywords=%s, sound_bindings=%s.",
         video_state is not None,
+        resolved_video_state is not None,
         bool(llm_result),
         bool(keywords),
         bool(sound_bindings),
     )
-    if video_state is None:
+    if resolved_video_state is None:
         return ("请先完成字幕生成和第二步处理。", *_skipped_outputs(9), "", None, *_progress_updates("render", 0))
     if not llm_result:
         return ("请先完成第二步高光提取。", *_skipped_outputs(9), "", None, *_progress_updates("render", 0))
@@ -279,7 +312,7 @@ def submit_render(llm_result, video_state, keywords, sound_bindings):
                 ranges = "\n".join("[{}-{}]".format(start, end) for start, end in clip["ranges"])
                 video, _, _, clip_srt = render_highlight_video(
                     ranges,
-                    video_state,
+                    resolved_video_state,
                     keywords=clip["keywords"],
                     sound_bindings=clip["sound_bindings"],
                     visual_bindings=clip.get("visual_bindings"),
@@ -296,7 +329,9 @@ def submit_render(llm_result, video_state, keywords, sound_bindings):
                     ))
                 report("阶段 1/1：已完成 {}/{} 条视频。".format(index, len(llm_result["clips"])), round(index * 100 / len(llm_result["clips"])))
             return {"video": videos, "sound_logic": logic_files}
-        video, _, _, clip_srt = render_highlight_video(llm_result, video_state, keywords=keywords, sound_bindings=sound_bindings)
+        video, _, _, clip_srt = render_highlight_video(
+            llm_result, resolved_video_state, keywords=keywords, sound_bindings=sound_bindings
+        )
         report("阶段 1/1：视频生成完成。", 100)
         logic_files = [write_sound_effect_logic(video, clip_srt, sound_bindings, "clip_01")] if video else []
         return {"video": video, "sound_logic": logic_files}
