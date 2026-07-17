@@ -11,7 +11,7 @@ from typing import Callable
 
 
 _ROOT = Path(__file__).resolve().parent.parent / "visual_assets"
-_CONFIG_FILES = (_ROOT / "picture_assets_index.json", _ROOT / "picture_for_video_asset_index.json")
+_DEFAULT_CONFIG_FILE = _ROOT / "picture_assets_index.json"
 _STATIC_IMAGE_MIN_DURATION_SECONDS = 0.2
 _MAX_DISPLAY_DURATION_SECONDS = 12.0
 _MIN_VISUAL_ASSET_COUNT = 2
@@ -59,14 +59,95 @@ def _decode_file_name(value: str) -> str:
     return re.sub(r"#U([0-9A-Fa-f]{4})", lambda match: chr(int(match.group(1), 16)), str(value or ""))
 
 
-def _config_path() -> Path:
+def _config_paths() -> list[Path]:
+    """Read every JSON index beside the configured index, in a stable order."""
     configured = os.environ.get("FUNCLIP_VISUAL_ASSET_CONFIG")
     if configured:
         path = Path(configured).expanduser()
-        if path.is_file():
-            return path
-        logging.warning("Configured visual asset index is missing, falling back: %s", path)
-    return next((path for path in _CONFIG_FILES if path.is_file()), _CONFIG_FILES[0])
+        if path.is_dir():
+            paths = sorted(candidate for candidate in path.glob("*.json") if candidate.is_file())
+            if paths:
+                return paths
+            logging.warning("Configured visual asset index directory has no JSON files: %s", path)
+        elif path.is_file():
+            siblings = sorted(
+                candidate for candidate in path.parent.glob("*.json")
+                if candidate.is_file() and candidate != path
+            )
+            return [path, *siblings]
+        else:
+            logging.warning("Configured visual asset index is missing, falling back: %s", path)
+
+    paths = sorted(candidate for candidate in _ROOT.glob("*.json") if candidate.is_file())
+    if _DEFAULT_CONFIG_FILE in paths:
+        paths.remove(_DEFAULT_CONFIG_FILE)
+        paths.insert(0, _DEFAULT_CONFIG_FILE)
+    return paths
+
+
+def _load_asset_index(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logging.warning("Visual asset index is unreadable: %s", path)
+        return None
+    if isinstance(data, list):
+        return {
+            "schema_version": "array-index",
+            "purpose": "Medical short-video visual asset index",
+            "selection_rules": {},
+            "assets": data,
+        }
+    if isinstance(data, dict) and isinstance(data.get("assets"), list):
+        return data
+    logging.warning("Visual asset index has no supported assets array: %s", path)
+    return None
+
+
+def _default_selection_rules() -> dict:
+    return {
+        "allow_no_asset": True,
+        "max_assets_per_sentence": 1,
+        "duration_seconds": "Each asset duration_seconds is its minimum display duration.",
+        "static_image_minimum_duration_seconds": _STATIC_IMAGE_MIN_DURATION_SECONDS,
+        "minimum_visual_asset_count": _MIN_VISUAL_ASSET_COUNT,
+        "minimum_total_visual_duration_seconds_exclusive": _MIN_TOTAL_VISUAL_DURATION_SECONDS,
+        "recommended_total_visual_duration_seconds": 5.2,
+    }
+
+
+def _asset_config() -> dict:
+    """Merge compatible asset-index files without allowing duplicate asset IDs."""
+    assets, source_files, seen_ids = [], [], set()
+    purpose = "Medical short-video visual asset index"
+    selection_rules = _default_selection_rules()
+    for path in _config_paths():
+        loaded = _load_asset_index(path)
+        if loaded is None:
+            continue
+        source_files.append(str(path))
+        purpose = str(loaded.get("purpose") or purpose)
+        if isinstance(loaded.get("selection_rules"), dict):
+            selection_rules.update(loaded["selection_rules"])
+        for raw_item in loaded.get("assets", []):
+            if not isinstance(raw_item, dict) or not raw_item.get("id"):
+                continue
+            item = _normalise_asset(raw_item)
+            asset_id = str(item["id"])
+            if asset_id in seen_ids:
+                logging.warning("Skipping duplicate visual asset id %s from %s", asset_id, path)
+                continue
+            seen_ids.add(asset_id)
+            assets.append(item)
+    if not source_files:
+        logging.warning("No readable visual asset index files were found under %s", _ROOT)
+    return {
+        "schema_version": "multi-file-index",
+        "purpose": purpose,
+        "selection_rules": selection_rules,
+        "source_files": source_files,
+        "assets": assets,
+    }
 
 
 def _minimum_display_duration_seconds(item: dict, is_gif: bool) -> float:
@@ -120,32 +201,6 @@ def _normalise_asset(item: dict) -> dict:
     }
 
 
-def _asset_config() -> dict:
-    path = _config_path()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        logging.warning("Visual asset index is unreadable: %s", path)
-        return {}
-    if isinstance(data, list):
-        return {
-            "schema_version": "array-index",
-            "purpose": "Medical short-video visual asset index",
-            "selection_rules": {
-                "allow_no_asset": True,
-                "max_assets_per_sentence": 1,
-                "duration_seconds": "Each asset duration_seconds is its minimum display duration.",
-                "static_image_minimum_duration_seconds": _STATIC_IMAGE_MIN_DURATION_SECONDS,
-                "minimum_visual_asset_count": _MIN_VISUAL_ASSET_COUNT,
-                "minimum_total_visual_duration_seconds_exclusive": _MIN_TOTAL_VISUAL_DURATION_SECONDS,
-                "recommended_total_visual_duration_seconds": 5.2,
-            },
-            "assets": [_normalise_asset(item) for item in data if isinstance(item, dict)],
-        }
-    if isinstance(data, dict) and isinstance(data.get("assets"), list):
-        return {**data, "assets": [_normalise_asset(item) for item in data["assets"] if isinstance(item, dict)]}
-    logging.warning("Visual asset index has no supported assets array: %s", path)
-    return {}
 
 
 def _configured_assets() -> list[dict]:
@@ -175,7 +230,8 @@ def get_visual_asset_definition(asset_id: str) -> dict:
 
 def _available_assets() -> list[dict]:
     assets = []
-    configured_assets = _configured_assets()
+    config = _asset_config()
+    configured_assets = [item for item in config.get("assets", []) if isinstance(item, dict) and item.get("id")]
     for item in configured_assets:
         if resolve_visual_asset_file(str(item["id"])) is None:
             continue
@@ -197,8 +253,8 @@ def _available_assets() -> list[dict]:
             },
         })
     logging.warning(
-        "Visual asset availability: %d/%d files matched; config=%s; directory=%s",
-        len(assets), len(configured_assets), _config_path(), visual_asset_directory(),
+        "Visual asset availability: %d/%d files matched; config_files=%s; directory=%s",
+        len(assets), len(configured_assets), config.get("source_files", []), visual_asset_directory(),
     )
     return assets
 

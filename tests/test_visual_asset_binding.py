@@ -62,6 +62,43 @@ class VisualAssetBindingTests(unittest.TestCase):
         self.assertEqual(assets[0]["media_type"], "image")
         self.assertEqual(assets[0]["duration_seconds"], 0.2)
 
+    def test_reads_new_index_files_beside_the_existing_index(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            asset_directory = root / "assets"
+            asset_directory.mkdir()
+            (asset_directory / "base.png").write_bytes(b"PNG")
+            (asset_directory / "new.gif").write_bytes(b"GIF89a")
+            (asset_directory / "duplicate.png").write_bytes(b"PNG")
+            base_config = root / "picture_assets_index.json"
+            base_config.write_text(json.dumps([{
+                "id": "base_asset",
+                "file_name": "base.png",
+                "description": "Base asset.",
+                "recommended_scenes": "Base scenes.",
+                "duration_seconds": 0.2,
+            }]), encoding="utf-8")
+            (root / "new_assets.json").write_text(json.dumps([{
+                "id": "new_asset",
+                "file_name": "new.gif",
+                "description": "New asset.",
+                "recommended_scenes": "New scenes.",
+                "duration_seconds": 1.5,
+            }, {
+                "id": "base_asset",
+                "file_name": "duplicate.png",
+                "description": "Must not override the original asset.",
+            }]), encoding="utf-8")
+            with patch.dict(os.environ, {
+                "FUNCLIP_VISUAL_ASSET_CONFIG": str(base_config),
+                "FUNCLIP_VISUAL_ASSET_DIR": str(asset_directory),
+            }, clear=False):
+                assets = _available_assets()
+
+        self.assertEqual([asset["id"] for asset in assets], ["base_asset", "new_asset"])
+        self.assertEqual(assets[0]["file_name"], "base.png")
+        self.assertEqual(assets[1]["file_name"], "new.gif")
+
     def test_visual_sentences_only_expose_present_keywords(self):
         srt = "1\n00:00:01,000 --> 00:00:04,000\nAvoid smoking.\n"
         self.assertEqual(
