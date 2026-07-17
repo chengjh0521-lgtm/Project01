@@ -259,6 +259,13 @@ def submit_process_from_saved(saved_file, api_key, keyword_count, clip_count, vi
 
 
 def submit_render(llm_result, video_state, keywords, sound_bindings):
+    logging.warning(
+        "Render submission received: video_state=%s, plan=%s, keywords=%s, sound_bindings=%s.",
+        video_state is not None,
+        bool(llm_result),
+        bool(keywords),
+        bool(sound_bindings),
+    )
     if video_state is None:
         return ("请先完成字幕生成和第二步处理。", *_skipped_outputs(9), "", None, *_progress_updates("render", 0))
     if not llm_result:
@@ -355,6 +362,7 @@ def poll_job(job_ref):
 
 def resume_job(job_id):
     """Resume polling after a browser refresh using the visible job ID."""
+    logging.warning("Job query received: %s", str(job_id or "").strip()[:16])
     if not str(job_id or "").strip():
         return ("请输入需要恢复的后台任务 ID。", *_skipped_outputs(10), "", None, *_progress_updates())
     return poll_job({"id": str(job_id).strip()})
@@ -517,7 +525,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             render_progress,
         ],
         show_progress="hidden",
-        concurrency_limit=4,
+        queue=False,
     )
     resume_button.click(
         resume_job,
@@ -541,7 +549,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             render_progress,
         ],
         show_progress="hidden",
-        concurrency_limit=4,
+        queue=False,
     )
     sound_refresh_button.click(
         refresh_sound_effects,
@@ -585,7 +593,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             render_progress,
         ],
         show_progress="hidden",
-        concurrency_limit=4,
+        queue=False,
     )
 
 

@@ -34,6 +34,7 @@ class JobManager:
         with self._jobs_lock:
             self._jobs[job_id] = job
         self._executor.submit(self._run, job_id, job, worker)
+        logging.warning("后台任务 %s [%s] 已进入本地后台队列。", job_id[:8], kind)
         return job_id
 
     def _run(self, job_id: str, job: Job, worker: Callable[[Callable[[str, int | None], None]], Any]) -> None:
