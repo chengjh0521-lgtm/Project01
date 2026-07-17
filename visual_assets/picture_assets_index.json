@@ -3,9 +3,7 @@
     "id": "asset_001",
     "file_name": "中式家常菜.jfif",
     "description": "中式家常菜俯拍照片，包含多种炒菜、汤菜和主食。",
-    "main_content": "多道中式家常菜组成的一餐。",
     "recommended_scenes": "讲解日常饮食、家庭饮食结构、中餐搭配、菜品多样化。",
-    "disabled_scenes": "禁用于强调低油低盐、严格控糖餐、单一食材或药物治疗。",
     "size": "1440x960",
     "duration_seconds": 0.2
   },
@@ -13,9 +11,7 @@
     "id": "asset_002",
     "file_name": "优质蛋白质食物.jfif",
     "description": "优质蛋白质食物合集照片，包含鸡胸肉、牛肉、鸡蛋、奶制品、豆类和坚果。",
-    "main_content": "动物蛋白与植物蛋白来源。",
     "recommended_scenes": "讲解蛋白质摄入、增肌、营养补充、糖尿病饮食中的蛋白质选择。",
-    "disabled_scenes": "禁用于素食限定、低蛋白饮食、肾功能衰竭需限蛋白等场景。",
     "size": "4800x3200",
     "duration_seconds": 0.2
   },
@@ -23,9 +19,7 @@
     "id": "asset_003",
     "file_name": "健康餐盘.png",
     "description": "健康餐盘俯拍图，蔬菜、主食、蛋白质和水果搭配清晰。",
-    "main_content": "均衡膳食餐盘及多类食材。",
     "recommended_scenes": "讲解均衡饮食、餐盘比例、营养搭配、健康减重。",
-    "disabled_scenes": "禁用于极端节食、单一食物疗法或特定疾病处方餐。",
     "size": "1080x718",
     "duration_seconds": 0.2
   },
@@ -33,9 +27,7 @@
     "id": "asset_004",
     "file_name": "减肥反弹.jpg",
     "description": "减肥反弹对比图，人物从偏胖变瘦后又恢复肥胖。",
-    "main_content": "体重下降后再次反弹的过程。",
     "recommended_scenes": "讲解减肥反弹、节食失败、长期体重管理。",
-    "disabled_scenes": "禁用于正向减重成果、疾病诊断或药物疗效展示。",
     "size": "600x377",
     "duration_seconds": 0.2
   },
@@ -43,9 +35,7 @@
     "id": "asset_005",
     "file_name": "动脉粥样硬化示意图.jpg",
     "description": "动脉血管内脂质斑块堆积并造成管腔狭窄的医学示意图。",
-    "main_content": "正常血管与粥样斑块阻塞区域。",
     "recommended_scenes": "讲解动脉粥样硬化、高血脂、冠心病、心脑血管风险。",
-    "disabled_scenes": "禁用于静脉疾病、神经疾病或无关饮食内容。",
     "size": "1080x570",
     "duration_seconds": 0.2
   },
@@ -53,9 +43,7 @@
     "id": "asset_006",
     "file_name": "均衡饮食食材.jfif",
     "description": "多种谷物、蔬果、鱼肉蛋奶等食材的组合照片。",
-    "main_content": "构成均衡饮食的主要食材类别。",
     "recommended_scenes": "讲解食物多样化、营养均衡、膳食结构。",
-    "disabled_scenes": "禁用于单一营养素、严格禁食或药物治疗。",
     "size": "900x500",
     "duration_seconds": 0.2
   },
@@ -63,9 +51,7 @@
     "id": "asset_007",
     "file_name": "定时进餐.jpg",
     "description": "餐桌前摆放闹钟与餐具，表现按时吃饭。",
-    "main_content": "定时进餐和规律用餐。",
     "recommended_scenes": "讲解规律饮食、定时定量、稳定血糖、改善作息。",
-    "disabled_scenes": "禁用于空腹检查、禁食手术或断食方案。",
     "size": "1023x682",
     "duration_seconds": 0.2
   },
@@ -73,9 +59,7 @@
     "id": "asset_008",
     "file_name": "少吃油炸食品.jpg",
     "description": "一盘油炸食物上覆盖醒目的红色叉号。",
-    "main_content": "油炸食品及禁止或减少食用提示。",
     "recommended_scenes": "讲解少吃油炸食品、控制油脂、减重和心血管风险。",
-    "disabled_scenes": "禁用于正常烹饪教学、推荐油炸食品或非饮食话题。",
     "size": "640x446",
     "duration_seconds": 0.2
   },
@@ -83,9 +67,7 @@
     "id": "asset_009",
     "file_name": "指尖血糖检测.jpg",
     "description": "手持采血针在指尖取血并使用血糖仪检测。",
-    "main_content": "指尖采血和家用血糖监测。",
     "recommended_scenes": "讲解自测血糖、血糖仪使用、糖尿病日常监测。",
-    "disabled_scenes": "禁用于静脉抽血、血压检测或无创检测。",
     "size": "640x382",
     "duration_seconds": 0.2
   },
@@ -93,9 +75,7 @@
     "id": "asset_010",
     "file_name": "控盐饮食.jpg",
     "description": "食盐摆成英文 SALT 并配有盐罐，强调盐摄入。",
-    "main_content": "食盐和控盐概念。",
     "recommended_scenes": "讲解低盐饮食、高血压管理、钠摄入控制。",
-    "disabled_scenes": "禁用于补盐、低钠血症治疗或甜食主题。",
     "size": "660x414",
     "duration_seconds": 0.2
   },
@@ -103,9 +83,7 @@
     "id": "asset_011",
     "file_name": "新鲜水果.jfif",
     "description": "多种新鲜水果平铺展示。",
-    "main_content": "橙子、莓果、葡萄等水果。",
     "recommended_scenes": "讲解水果选择、维生素、膳食纤维和健康加餐。",
-    "disabled_scenes": "禁用于强调果汁等同水果、严格禁果或药物治疗。",
     "size": "474x316",
     "duration_seconds": 0.2
   },
@@ -113,9 +91,7 @@
     "id": "asset_012",
     "file_name": "日常喝水.jpeg",
     "description": "人物仰头饮用瓶装水。",
-    "main_content": "日常饮水与补水行为。",
     "recommended_scenes": "讲解补水、饮水习惯、运动后饮水。",
-    "disabled_scenes": "禁用于限水患者、饮酒或含糖饮料场景。",
     "size": "1259x800",
     "duration_seconds": 0.2
   },
@@ -123,9 +99,7 @@
     "id": "asset_013",
     "file_name": "日式均衡套餐.jpg",
     "description": "日式套餐包含鱼、蔬菜、米饭和汤。",
-    "main_content": "一人份日式均衡餐。",
     "recommended_scenes": "讲解一餐搭配、少量多样、鱼类蛋白。",
-    "disabled_scenes": "禁用于中式菜、纯素餐或严格低碳饮食。",
     "size": "600x602",
     "duration_seconds": 0.2
   },
@@ -133,9 +107,7 @@
     "id": "asset_014",
     "file_name": "果蔬汁.jpg",
     "description": "多杯颜色不同的果蔬汁与新鲜水果。",
-    "main_content": "果汁和蔬菜汁饮品。",
     "recommended_scenes": "讲解果蔬汁、饮品选择、液体热量。",
-    "disabled_scenes": "禁用于暗示果汁可完全替代完整水果或无糖饮料。",
     "size": "1080x608",
     "duration_seconds": 0.2
   },
@@ -143,9 +115,7 @@
     "id": "asset_015",
     "file_name": "烤香肠.jpg",
     "description": "多根香肠在烤架上烧烤。",
-    "main_content": "加工肉制品和高温烧烤。",
     "recommended_scenes": "讲解加工肉、香肠、烧烤食品、盐脂摄入。",
-    "disabled_scenes": "禁用于推荐优质蛋白或清淡饮食。",
     "size": "474x316",
     "duration_seconds": 0.2
   },
@@ -153,9 +123,7 @@
     "id": "asset_016",
     "file_name": "烹调食用油.jpg",
     "description": "食用油从勺子流入容器的特写。",
-    "main_content": "液态烹调油。",
     "recommended_scenes": "讲解食用油用量、脂肪摄入和烹饪方式。",
-    "disabled_scenes": "禁用于无油饮食、饮用油或药物场景。",
     "size": "350x350",
     "duration_seconds": 0.2
   },
@@ -163,9 +131,7 @@
     "id": "asset_017",
     "file_name": "熬夜玩手机.jpg",
     "description": "人物夜间躺在床上使用手机。",
-    "main_content": "熬夜、夜间屏幕和睡眠不足。",
     "recommended_scenes": "讲解熬夜、睡眠管理、手机影响睡眠。",
-    "disabled_scenes": "禁用于正常白天使用手机或运动场景。",
     "size": "640x380",
     "duration_seconds": 0.2
   },
@@ -173,9 +139,7 @@
     "id": "asset_018",
     "file_name": "甜食诱惑.jfif",
     "description": "人物面对大量蛋糕甜点并表现出想吃的状态。",
-    "main_content": "甜食诱惑与高糖食品。",
     "recommended_scenes": "讲解控糖、甜食欲望、减重困难和饮食自控。",
-    "disabled_scenes": "禁用于推荐甜品、低糖食品或正餐搭配。",
     "size": "600x402",
     "duration_seconds": 0.2
   },
@@ -183,9 +147,7 @@
     "id": "asset_019",
     "file_name": "生鲜红肉.png",
     "description": "砧板上的生鲜牛肉及蔬菜配料。",
-    "main_content": "红肉原料。",
     "recommended_scenes": "讲解红肉摄入、铁和蛋白质、肉类选择。",
-    "disabled_scenes": "禁用于熟食展示、素食或加工肉主题。",
     "size": "720x480",
     "duration_seconds": 0.2
   },
@@ -193,9 +155,7 @@
     "id": "asset_020",
     "file_name": "神经元细胞.jpg",
     "description": "神经元细胞及突触结构的医学插画。",
-    "main_content": "神经细胞与神经网络。",
     "recommended_scenes": "讲解神经系统、神经损伤、糖尿病神经病变。",
-    "disabled_scenes": "禁用于肌肉、骨骼或消化系统主题。",
     "size": "1080x540",
     "duration_seconds": 0.2
   },
@@ -203,9 +163,7 @@
     "id": "asset_021",
     "file_name": "精制白米.jpg",
     "description": "竹筐中盛放精制白米。",
-    "main_content": "白米和精制谷物。",
     "recommended_scenes": "讲解主食、精制碳水、升糖指数和米饭摄入。",
-    "disabled_scenes": "禁用于全谷物、糙米或高蛋白食物。",
     "size": "640x391",
     "duration_seconds": 0.2
   },
@@ -213,9 +171,7 @@
     "id": "asset_022",
     "file_name": "精致蛋糕甜点.jpg",
     "description": "多款精致蛋糕与甜点陈列。",
-    "main_content": "高糖高脂甜点。",
     "recommended_scenes": "讲解甜食、添加糖、控糖和热量。",
-    "disabled_scenes": "禁用于健康主食、低糖食品或药物治疗。",
     "size": "900x383",
     "duration_seconds": 0.2
   },
@@ -223,9 +179,7 @@
     "id": "asset_023",
     "file_name": "糖尿病健康餐盘.jpg",
     "description": "糖尿病健康餐盘示意，标明蔬菜、蛋白质和主食比例。",
-    "main_content": "糖尿病饮食餐盘分区。",
     "recommended_scenes": "讲解糖尿病饮食、餐盘法、控糖配餐。",
-    "disabled_scenes": "禁用于所有人通用的精确处方或药物替代。",
     "size": "658x494",
     "duration_seconds": 0.2
   },
@@ -233,9 +187,7 @@
     "id": "asset_024",
     "file_name": "糖尿病患者服药.jpg",
     "description": "人物手持药片和水杯准备服药。",
-    "main_content": "糖尿病患者口服药物。",
     "recommended_scenes": "讲解按时服药、口服降糖药、依从性。",
-    "disabled_scenes": "禁用于胰岛素注射、停药建议或具体药物品牌。",
     "size": "1800x1200",
     "duration_seconds": 0.2
   },
@@ -243,9 +195,7 @@
     "id": "asset_025",
     "file_name": "糖尿病肾病示意图.jpg",
     "description": "糖尿病肾病与正常肾脏的对比示意图。",
-    "main_content": "肾脏损伤和糖尿病肾病。",
     "recommended_scenes": "讲解糖尿病肾病、微血管并发症、肾功能保护。",
-    "disabled_scenes": "禁用于普通腰痛、泌尿感染或无关肾病。",
     "size": "500x353",
     "duration_seconds": 0.2
   },
@@ -253,9 +203,7 @@
     "id": "asset_026",
     "file_name": "糖尿病足插画.jpg",
     "description": "脚部疼痛并标注糖尿病的医学插画。",
-    "main_content": "糖尿病足和足部并发症。",
     "recommended_scenes": "讲解糖尿病足、足部护理、神经和血管并发症。",
-    "disabled_scenes": "禁用于普通扭伤、美容护理或非糖尿病足痛。",
     "size": "800x564",
     "duration_seconds": 0.2
   },
@@ -263,9 +211,7 @@
     "id": "asset_027",
     "file_name": "肥胖与血糖升高.jpeg",
     "description": "腹型肥胖人物旁出现血糖上升箭头和高热量食物。",
-    "main_content": "肥胖与血糖升高关系。",
     "recommended_scenes": "讲解肥胖、胰岛素抵抗、血糖上升和减重必要性。",
-    "disabled_scenes": "禁用于体重正常者、低血糖或增重建议。",
     "size": "3808x4416",
     "duration_seconds": 0.2
   },
@@ -273,9 +219,7 @@
     "id": "asset_028",
     "file_name": "腹型肥胖.jpeg",
     "description": "人物腹部肥胖并使用软尺测量腰围。",
-    "main_content": "腹型肥胖与腰围测量。",
     "recommended_scenes": "讲解腰围、内脏脂肪、中心性肥胖和代谢风险。",
-    "disabled_scenes": "禁用于全身体重不足、儿童生长或无关体型讨论。",
     "size": "860x573",
     "duration_seconds": 0.2
   },
@@ -283,9 +227,7 @@
     "id": "asset_029",
     "file_name": "血液循环与心血管.jpeg",
     "description": "血管内红细胞流动并突出心脏的医学视觉图。",
-    "main_content": "血液循环、心脏和血管。",
     "recommended_scenes": "讲解心血管系统、血液循环、心脑血管风险。",
-    "disabled_scenes": "禁用于消化、骨骼或皮肤主题。",
     "size": "637x421",
     "duration_seconds": 0.2
   },
@@ -293,9 +235,7 @@
     "id": "asset_030",
     "file_name": "血糖检测插画.jpeg",
     "description": "插画形式展示血糖仪、试纸和指尖检测。",
-    "main_content": "家用血糖检测流程。",
     "recommended_scenes": "讲解血糖监测、糖尿病自我管理和检测工具。",
-    "disabled_scenes": "禁用于血压、血脂或医院静脉采血。",
     "size": "1896x1156",
     "duration_seconds": 0.2
   },
@@ -303,9 +243,7 @@
     "id": "asset_031",
     "file_name": "限时进食与生物钟.jpeg",
     "description": "闹钟与健康食物组合，表达限定进食时间。",
-    "main_content": "进食时间和生物钟。",
     "recommended_scenes": "讲解限时进食、规律进餐、进食窗口和昼夜节律。",
-    "disabled_scenes": "禁用于所有患者通用推荐、孕妇或特殊疾病强制断食。",
     "size": "860x573",
     "duration_seconds": 0.2
   },
@@ -313,9 +251,7 @@
     "id": "asset_032",
     "file_name": "饮酒碰杯.png",
     "description": "两人手持酒杯碰杯。",
-    "main_content": "饮酒和社交喝酒。",
     "recommended_scenes": "讲解饮酒、酒精摄入、戒酒和饮酒风险。",
-    "disabled_scenes": "禁用于饮水、药物或推荐饮酒获益。",
     "size": "1080x720",
     "duration_seconds": 0.2
   },
@@ -323,9 +259,7 @@
     "id": "asset_033",
     "file_name": "高蛋白补充食品.jpg",
     "description": "蛋白粉、奶、鸡蛋、鸡胸肉等补充食品。",
-    "main_content": "蛋白质补充产品和食物。",
     "recommended_scenes": "讲解蛋白补充、健身营养和术后营养。",
-    "disabled_scenes": "禁用于肾功能受损需限蛋白或普通药品。",
     "size": "640x356",
     "duration_seconds": 0.2
   },
@@ -333,9 +267,7 @@
     "id": "asset_034",
     "file_name": "高蛋白食物合集.jpeg",
     "description": "鱼肉蛋奶豆和坚果等高蛋白食物合集。",
-    "main_content": "多来源高蛋白食物。",
     "recommended_scenes": "讲解优质蛋白、营养补充和食物选择。",
-    "disabled_scenes": "禁用于低蛋白治疗或单一食物推荐。",
     "size": "5056x3328",
     "duration_seconds": 0.2
   },
@@ -343,9 +275,7 @@
     "id": "asset_035",
     "file_name": "鲜榨果汁.jpg",
     "description": "多杯现榨水果汁及水果原料。",
-    "main_content": "鲜榨果汁。",
     "recommended_scenes": "讲解果汁糖分、饮品选择和水果加工。",
-    "disabled_scenes": "禁用于宣称果汁无糖、完全替代水果或替代饮水。",
     "size": "1280x1024",
     "duration_seconds": 0.2
   },
@@ -353,9 +283,7 @@
     "id": "asset_036",
     "file_name": "7月16日(1).gif",
     "description": "绿幕动图，显示“小贴士”文字标签。",
-    "main_content": "小贴士标题和装饰元素。",
     "recommended_scenes": "引出简短建议、注意事项或实用技巧。",
-    "disabled_scenes": "禁用于严重警告、疾病诊断或悲伤内容。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -363,9 +291,7 @@
     "id": "asset_037",
     "file_name": "7月16日(1).png",
     "description": "黑色背景的生鲜红肉透明素材。",
-    "main_content": "一块红肉食材。",
     "recommended_scenes": "讲解红肉、肉类选择、蛋白质或脂肪摄入。",
-    "disabled_scenes": "禁用于蔬菜、药物、饮水或素食内容。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -373,9 +299,7 @@
     "id": "asset_038",
     "file_name": "7月16日(10).gif",
     "description": "绿幕动图，显示“注意”文字与警示图标。",
-    "main_content": "注意提示文字。",
     "recommended_scenes": "用于重要提醒、禁忌、风险或需观众留意的内容。",
-    "disabled_scenes": "禁用于普通名词、轻松过渡或积极结论。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -383,9 +307,7 @@
     "id": "asset_039",
     "file_name": "7月16日(10).png",
     "description": "黑色背景的医学图形素材，主体较暗，适合作为辅助提示元素。",
-    "main_content": "深色医学图标或装饰元素。",
     "recommended_scenes": "仅在画面预览确认主体清晰后用于医学提示。",
-    "disabled_scenes": "禁用于主体不可辨识、背景无法正确抠除或需要精确医学表达的场景。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -393,9 +315,7 @@
     "id": "asset_040",
     "file_name": "7月16日(11).gif",
     "description": "绿幕动图，展示血糖相关的检测或血滴元素。",
-    "main_content": "血糖检测视觉元素。",
     "recommended_scenes": "讲解测血糖、血糖仪、血糖数值或糖尿病监测。",
-    "disabled_scenes": "禁用于血压、饮食或无关检测。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -403,9 +323,7 @@
     "id": "asset_041",
     "file_name": "7月16日(11).png",
     "description": "黑色背景的圆形血糖与血滴插画。",
-    "main_content": "血滴落在检测区域的图标。",
     "recommended_scenes": "讲解血糖检测、采血和血糖监测。",
-    "disabled_scenes": "禁用于大量出血、创伤或血压检测。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -413,9 +331,7 @@
     "id": "asset_042",
     "file_name": "7月16日(12).gif",
     "description": "绿幕动图，人物在跑步机上运动。",
-    "main_content": "有氧运动和跑步机锻炼。",
     "recommended_scenes": "讲解运动、减重、改善胰岛素敏感性和生活方式干预。",
-    "disabled_scenes": "禁用于禁止运动、急性损伤或卧床休息。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -423,9 +339,7 @@
     "id": "asset_043",
     "file_name": "7月16日(12).png",
     "description": "黑色背景的小型运动或能量提示图标。",
-    "main_content": "运动相关装饰图形。",
     "recommended_scenes": "用于运动建议或节奏性转场。",
-    "disabled_scenes": "禁用于主体需要清晰说明或非运动内容。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -433,9 +347,7 @@
     "id": "asset_044",
     "file_name": "7月16日(13).png",
     "description": "黑色背景的便携式血糖仪素材，屏幕显示数值。",
-    "main_content": "血糖仪和检测结果。",
     "recommended_scenes": "讲解血糖检测、血糖数值和家庭监测。",
-    "disabled_scenes": "禁用于血压计、体温计或药物。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -443,9 +355,7 @@
     "id": "asset_045",
     "file_name": "7月16日(14).png",
     "description": "黑色背景的卡通胃部器官素材。",
-    "main_content": "胃和消化系统。",
     "recommended_scenes": "讲解胃、消化、进食后反应和胃部不适。",
-    "disabled_scenes": "禁用于心脏、肾脏或血糖仪主题。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -453,9 +363,7 @@
     "id": "asset_046",
     "file_name": "7月16日(15).png",
     "description": "黑色背景的蓝色心脏图标。",
-    "main_content": "心脏器官。",
     "recommended_scenes": "讲解心脏、心血管风险、心率和冠心病。",
-    "disabled_scenes": "禁用于胃肠、肾脏或纯饮食画面。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -463,9 +371,7 @@
     "id": "asset_047",
     "file_name": "7月16日(16).png",
     "description": "黑色背景的两板彩色药片素材。",
-    "main_content": "口服药片和药物。",
     "recommended_scenes": "讲解服药、药物治疗、按时用药或药物依从性。",
-    "disabled_scenes": "禁用于食物、保健品替代药物或停药建议。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -473,9 +379,7 @@
     "id": "asset_048",
     "file_name": "7月16日(17).png",
     "description": "黑色背景的红色急救箱素材。",
-    "main_content": "医疗急救箱。",
     "recommended_scenes": "讲解急救、紧急处理、就医或医疗准备。",
-    "disabled_scenes": "禁用于日常饮食、普通科普名词或轻松场景。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -483,9 +387,7 @@
     "id": "asset_049",
     "file_name": "7月16日(2).gif",
     "description": "绿幕动图，显示“划重点”文字。",
-    "main_content": "重点提示标题。",
     "recommended_scenes": "用于核心结论、关键数字或医生重要提醒。",
-    "disabled_scenes": "禁用于每句话重复使用、普通过渡或无重点内容。",
     "size": "426x240",
     "duration_seconds": 5.2
   },
@@ -493,9 +395,7 @@
     "id": "asset_050",
     "file_name": "7月16日(2).png",
     "description": "黑色背景的水果拼盘素材。",
-    "main_content": "多种水果组成的果盘。",
     "recommended_scenes": "讲解水果、维生素、健康加餐和食物多样化。",
-    "disabled_scenes": "禁用于果汁、药物或严格禁果场景。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -503,9 +403,7 @@
     "id": "asset_051",
     "file_name": "7月16日(3).gif",
     "description": "绿幕动图，红色线条快速划过。",
-    "main_content": "红色强调划线或转场轨迹。",
     "recommended_scenes": "用于快速强调、划重点或短促转场。",
-    "disabled_scenes": "禁用于缓慢严肃叙述、长期停留或多次连续叠加。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -513,9 +411,7 @@
     "id": "asset_052",
     "file_name": "7月16日(3).png",
     "description": "黑色背景的一棵青菜素材。",
-    "main_content": "绿叶蔬菜。",
     "recommended_scenes": "讲解蔬菜、膳食纤维、低热量饮食和均衡配餐。",
-    "disabled_scenes": "禁用于肉类、药物或纯水果主题。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -523,9 +419,7 @@
     "id": "asset_053",
     "file_name": "7月16日(4).gif",
     "description": "绿幕动图，展示一盘均衡餐食。",
-    "main_content": "健康餐盘和餐具。",
     "recommended_scenes": "讲解均衡饮食、健康配餐和一餐结构。",
-    "disabled_scenes": "禁用于禁食、单一食材或药物治疗。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -533,9 +427,7 @@
     "id": "asset_054",
     "file_name": "7月16日(4).png",
     "description": "黑色背景的多种蔬菜合集。",
-    "main_content": "彩椒、胡萝卜、绿叶菜等蔬菜。",
     "recommended_scenes": "讲解多吃蔬菜、膳食纤维、控糖和健康饮食。",
-    "disabled_scenes": "禁用于水果、肉类或药物主题。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -543,9 +435,7 @@
     "id": "asset_055",
     "file_name": "7月16日(5).gif",
     "description": "绿幕动图，红色鼠标指针移动或点击。",
-    "main_content": "指针和点击提示。",
     "recommended_scenes": "用于指向画面重点、列表项目或操作步骤。",
-    "disabled_scenes": "禁用于无明确指向对象或严肃病情说明。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -553,9 +443,7 @@
     "id": "asset_056",
     "file_name": "7月16日(5).png",
     "description": "黑色背景的可爱白色卡通人物。",
-    "main_content": "可爱角色和挥手动作。",
     "recommended_scenes": "用于轻松提示、友好结尾或简单互动。",
-    "disabled_scenes": "禁用于重症、死亡风险、并发症或严肃警告。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -563,9 +451,7 @@
     "id": "asset_057",
     "file_name": "7月16日(6).gif",
     "description": "绿幕动图，手势指向或做提示动作。",
-    "main_content": "手部指示动作。",
     "recommended_scenes": "用于强调单个词、提示关注或引导视线。",
-    "disabled_scenes": "禁用于没有明确目标、连续高频使用或严肃病情。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -573,9 +459,7 @@
     "id": "asset_058",
     "file_name": "7月16日(6).png",
     "description": "黑色背景的红色问号素材。",
-    "main_content": "疑问和问题提示。",
     "recommended_scenes": "用于提出问题、引出误区、制造悬念或患者疑问。",
-    "disabled_scenes": "禁用于明确结论、答案已给出或无疑问语义。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -583,9 +467,7 @@
     "id": "asset_059",
     "file_name": "7月16日(7).gif",
     "description": "绿幕动图，红色警告三角标志。",
-    "main_content": "危险或注意警告图标。",
     "recommended_scenes": "用于风险、禁忌、严重后果和必须注意的内容。",
-    "disabled_scenes": "禁用于普通建议、积极结果或轻松科普。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -593,9 +475,7 @@
     "id": "asset_060",
     "file_name": "7月16日(7).png",
     "description": "黑色背景的红色矩形描边框。",
-    "main_content": "重点区域框选标记。",
     "recommended_scenes": "用于框选画面中的数字、器官、按钮或关键词。",
-    "disabled_scenes": "禁用于没有可框选目标、全屏装饰或多个目标同时强调。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -603,9 +483,7 @@
     "id": "asset_061",
     "file_name": "7月16日(8).gif",
     "description": "绿幕动图，红色叉号。",
-    "main_content": "错误、禁止或否定标记。",
     "recommended_scenes": "用于错误做法、禁忌、不能做和辟谣内容。",
-    "disabled_scenes": "禁用于正确做法、积极结论或不确定观点。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -613,9 +491,7 @@
     "id": "asset_062",
     "file_name": "7月16日(8).png",
     "description": "黑色背景的绿色对勾素材。",
-    "main_content": "正确、通过或可行标记。",
     "recommended_scenes": "用于正确做法、达标、允许和确认结论。",
-    "disabled_scenes": "禁用于风险、禁止、失败或不确定结果。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -623,9 +499,7 @@
     "id": "asset_063",
     "file_name": "7月16日(9).gif",
     "description": "绿幕动图，可能用于白米或主食素材的动态展示。",
-    "main_content": "绿幕主食类动画元素。",
     "recommended_scenes": "仅在预览确认主体后用于米饭、主食或碳水化合物内容。",
-    "disabled_scenes": "禁用于主体不可见、无法正确抠除或非主食场景。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -633,9 +507,7 @@
     "id": "asset_064",
     "file_name": "7月16日(9).png",
     "description": "黑色背景的一碗白米饭素材。",
-    "main_content": "白米饭和精制主食。",
     "recommended_scenes": "讲解米饭、主食量、碳水化合物和升糖。",
-    "disabled_scenes": "禁用于蔬菜、蛋白质或完全无碳水内容。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   },
@@ -643,9 +515,7 @@
     "id": "asset_065",
     "file_name": "7月16日.gif",
     "description": "绿幕动图，卡通医生进行讲解或提示。",
-    "main_content": "医生人物和讲解动作。",
     "recommended_scenes": "用于医生建议、医学解释、就医提醒或权威提示。",
-    "disabled_scenes": "禁用于患者个人经历、娱乐化表演或替代真实医疗建议。",
     "size": "426x240",
     "duration_seconds": 3.0
   },
@@ -653,9 +523,7 @@
     "id": "asset_066",
     "file_name": "7月16日.png",
     "description": "黑色背景的医疗清单图标。",
-    "main_content": "病历夹、检查单或任务清单。",
     "recommended_scenes": "讲解检查项目、就医准备、步骤列表和注意事项清单。",
-    "disabled_scenes": "禁用于单一食物、器官或无列表结构内容。",
     "size": "1920x1080",
     "duration_seconds": 0.2
   }

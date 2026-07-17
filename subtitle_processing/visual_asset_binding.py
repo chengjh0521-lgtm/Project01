@@ -28,7 +28,7 @@ VISUAL_ASSET_SYSTEM_PROMPT = """
 
 你必须依据提供的素材索引（picture_assets_index.json）完成所有判断，不允许凭空创造素材或修改素材定义。
 
-输入包含 asset_index 和 sentences。asset_index 中每个素材包含 id、file_name、description、main_content、recommended_scenes、disabled_scenes、size、media_type 和 duration_seconds。description 与 main_content 表示素材真正表达的内容；recommended_scenes 是推荐使用语义；disabled_scenes 为强约束，必须严格遵守。
+输入包含 asset_index 和 sentences。asset_index 中每个素材包含 id、file_name、description、recommended_scenes、size、media_type 和 duration_seconds。description 表示素材真正表达的内容；recommended_scenes 表示推荐使用语义。
 
 duration_seconds 表示该素材的最短展示时长，而不是固定时长。静态图片的最短时长通常为 0.2 秒；动图的最短时长通常等于其真实完整时长。你必须根据当前句子的知识密度、关键词的重要性和画面停留是否有助理解，决定实际展示时长：普通快速提示可接近最短时长，具体食物/器官/行为等需要观众辨识的素材应适度延长，核心结论或重点提醒可更长。不要为了显眼而长时间遮挡画面。
 
@@ -38,7 +38,7 @@ sentences 中每项包含 sentence_id、start、end、text 和 keywords。素材
 
 先理解句子，再选择素材。素材应该帮助观众理解句子的核心信息，而不是仅仅对应某个名词。例如“糖尿病患者最好少吃油炸食品”应展示油炸食品素材，而不是糖尿病素材。只有当素材能明显提升理解效率时才使用：明确实物、人体器官或疾病示意图、生活方式、容易视觉化的医学概念，或需要重点提醒的结论。普通连接句、过渡句、寒暄、抽象推理、没有明确视觉对应物的内容通常不用素材。宁可不用，也不要强行选择。
 
-选择素材时必须综合参考 description、main_content、recommended_scenes 和 disabled_scenes。若违反 disabled_scenes，即使内容相似也不得选择。连续几句话讨论同一知识点时，原则上只在最值得展示素材的一句使用，避免连续重复展示。展示时长应尽量匹配当前句子的有效信息窗口，避免无意义地覆盖下一个话题；但不得短于素材给出的最低时长。
+选择素材时必须综合参考 description 和 recommended_scenes，并以整句语义判断是否真的有助于理解。连续几句话讨论同一知识点时，原则上只在最值得展示素材的一句使用，避免连续重复展示。展示时长应尽量匹配当前句子的有效信息窗口，避免无意义地覆盖下一个话题；但不得短于素材给出的最低时长。
 
 全局硬性约束：当输入中至少有两句带可用 keywords 的字幕时，整条高光素材必须至少选择 2 个视觉素材位置，且所有 use_asset=true 的 duration_seconds 相加必须严格大于 5 秒。请优先选择不同句子、不同知识点中最有画面价值的内容；为避免边界误差，建议总时长至少达到 5.2 秒。只有当输入本身少于两句可绑定字幕时，才允许无法满足“至少 2 个”的要求。
 
@@ -90,12 +90,10 @@ def _selected_display_duration_seconds(item: dict, requested: object) -> float:
 
 
 def _normalise_asset(item: dict) -> dict:
-    """Expose both generations of the index through the current field contract."""
+    """Normalize supported index layouts without exposing removed legacy fields."""
     raw_file_name = str(item.get("file_name", ""))
     file_name = _decode_file_name(raw_file_name)
-    description = str(item.get("description") or item.get("description_and_main_content") or "").strip()
-    main_content = str(item.get("main_content") or "").strip()
-    combined_description = "\n".join(part for part in (description, main_content) if part)
+    description = str(item.get("description") or "").strip()
     extension = Path(file_name).suffix.lower()
     metadata = item.get("technical_metadata") if isinstance(item.get("technical_metadata"), dict) else {}
     size_match = re.fullmatch(r"\s*(\d+)\s*[xX]\s*(\d+)\s*", str(item.get("size", "")))
@@ -109,11 +107,7 @@ def _normalise_asset(item: dict) -> dict:
         "raw_file_name": raw_file_name,
         "media_type": "animated_gif" if is_gif else str(item.get("media_type") or "image"),
         "description": description,
-        "main_content": main_content,
-        "description_and_main_content": combined_description,
         "recommended_scenes": str(item.get("recommended_scenes") or ""),
-        "disabled_scenes": str(item.get("disabled_scenes") or item.get("forbidden_scenes") or ""),
-        "forbidden_scenes": str(item.get("forbidden_scenes") or item.get("disabled_scenes") or ""),
         "size": str(item.get("size") or "{}x{}".format(width or "", height or "")),
         "duration_seconds": duration,
         "technical_metadata": {
@@ -121,7 +115,7 @@ def _normalise_asset(item: dict) -> dict:
             "height": height,
             "frame_count": metadata.get("frame_count"),
             "has_transparency": bool(metadata.get("has_transparency")) or extension in {".png", ".gif"},
-            "requires_chroma_key": bool(metadata.get("requires_chroma_key")) or (is_gif and "绿幕" in combined_description),
+            "requires_chroma_key": bool(metadata.get("requires_chroma_key")) or (is_gif and "绿幕" in description),
         },
     }
 
@@ -190,12 +184,8 @@ def _available_assets() -> list[dict]:
             "id": item["id"],
             "file_name": item.get("file_name", ""),
             "description": item.get("description", ""),
-            "main_content": item.get("main_content", ""),
             "media_type": item.get("media_type", "image"),
-            "description_and_main_content": item.get("description_and_main_content", ""),
             "recommended_scenes": item.get("recommended_scenes", ""),
-            "disabled_scenes": item.get("disabled_scenes", ""),
-            "forbidden_scenes": item.get("forbidden_scenes", ""),
             "size": item.get("size", ""),
             "duration_seconds": item.get("duration_seconds", 3.0),
             "technical_metadata": {

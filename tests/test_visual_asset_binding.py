@@ -21,9 +21,7 @@ class VisualAssetBindingTests(unittest.TestCase):
                 "id": "asset_001",
                 "file_name": "7#U670816#U65e5.gif",
                 "description": "绿幕动图，显示注意提示。",
-                "main_content": "注意文字。",
                 "recommended_scenes": "风险提醒。",
-                "disabled_scenes": "普通过渡。",
                 "size": "426x240",
                 "duration_seconds": 5.2,
             }], ensure_ascii=False), encoding="utf-8")
@@ -37,6 +35,8 @@ class VisualAssetBindingTests(unittest.TestCase):
         self.assertEqual(assets[0]["media_type"], "animated_gif")
         self.assertEqual(assets[0]["duration_seconds"], 5.2)
         self.assertTrue(assets[0]["technical_metadata"]["requires_chroma_key"])
+        self.assertNotIn("main_content", assets[0])
+        self.assertNotIn("disabled_scenes", assets[0])
 
     def test_static_images_keep_the_configured_point_two_second_minimum(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -49,9 +49,7 @@ class VisualAssetBindingTests(unittest.TestCase):
                 "id": "asset_image",
                 "file_name": "meal.png",
                 "description": "A balanced meal.",
-                "main_content": "Meal.",
                 "recommended_scenes": "Diet.",
-                "disabled_scenes": "None.",
                 "size": "100x100",
                 "duration_seconds": 0.2,
             }]), encoding="utf-8")
