@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 DEFAULT_DOCTOR_LABEL_FILE = Path(__file__).with_name("label.png")
-DOCTOR_LABEL_WIDTH_PIXELS = 200
+DOCTOR_LABEL_WIDTH_PIXELS = 67
 
 
 def apply_doctor_label(video_path: str | Path, label_path: str | Path | None = None) -> str:
