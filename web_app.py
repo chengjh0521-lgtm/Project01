@@ -71,6 +71,7 @@ from subtitle_processing.sound_effect_binding import (
     save_effect_details,
 )
 from video_generation import (
+    apply_doctor_label,
     describe_sound_effect_events,
     describe_visual_asset_events,
     render_highlight_video,
@@ -303,6 +304,7 @@ def _progress_updates(kind: str | None = None, value: int | None = None):
         "asr": (value, gr.skip(), gr.skip()),
         "process": (gr.skip(), value, gr.skip()),
         "render": (gr.skip(), gr.skip(), value),
+        "label": (gr.skip(), gr.skip(), value),
     }
     return mapping.get(kind, (gr.skip(), gr.skip(), gr.skip()))
 
@@ -474,6 +476,51 @@ def submit_render(llm_result, video_state, keywords, sound_bindings, library_vid
     return ("视频生成已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(11), job_id, {"id": job_id}, *_progress_updates("render", 0))
 
 
+def _video_paths_from_component(value):
+    """Normalize Gradio file values without accepting nonexistent video paths."""
+    values = value if isinstance(value, (list, tuple)) else [value]
+    paths = []
+    for item in values:
+        if isinstance(item, dict):
+            item = item.get("path")
+        elif not isinstance(item, (str, Path)):
+            item = getattr(item, "path", None)
+        if not item:
+            continue
+        path = Path(str(item)).expanduser().resolve()
+        if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS:
+            paths.append(str(path))
+    return paths
+
+
+def submit_doctor_label(rendered_videos):
+    video_paths = _video_paths_from_component(rendered_videos)
+    if not video_paths:
+        return (
+            "请先在第三模块生成视频，再执行专家标签烧录。",
+            *_skipped_outputs(11), "", None, *_progress_updates("label", 0),
+        )
+
+    def worker(report):
+        labeled_videos = []
+        for index, video_path in enumerate(video_paths, start=1):
+            report("阶段 1/1：正在为第 {}/{} 条视频烧录专家标签。".format(index, len(video_paths)), 5)
+            labeled_videos.append(apply_doctor_label(video_path))
+            report("阶段 1/1：已完成第 {}/{} 条视频的专家标签。".format(index, len(video_paths)), round(index * 100 / len(video_paths)))
+        return {
+            "video": labeled_videos,
+            "sound_logic": None,
+            "report": None,
+            "render_message": "专家标签模块完成；输出=" + ", ".join(labeled_videos),
+        }
+
+    job_id = JOBS.submit("label", worker)
+    return (
+        "专家标签烧录已进入后台队列：{}".format(job_id[:8]),
+        *_skipped_outputs(11), job_id, {"id": job_id}, *_progress_updates("label", 0),
+    )
+
+
 def poll_job(job_ref):
     job_id = job_ref.get("id") if isinstance(job_ref, dict) else None
     job = JOBS.get(job_id)
@@ -526,7 +573,7 @@ def poll_job(job_ref):
             None,
             *_progress_updates("process", 100),
         )
-    if job["kind"] == "render":
+    if job["kind"] in {"render", "label"}:
         return (
             prefix + "完成。" + str(result.get("render_message") or ""),
             *_skipped_outputs(8),
@@ -548,7 +595,7 @@ def resume_job(job_id):
     return poll_job({"id": str(job_id).strip()})
 
 
-with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
+with gr.Blocks(title="FunClip 四模块", css=OUTPUT_VIDEO_CSS) as app:
     video_input = gr.File(label="本地上传视频（可选）", file_types=["video"], type="filepath")
     library_video_input = gr.Dropdown(
         label="服务器待处理视频", choices=list_library_videos(), value=None
@@ -580,6 +627,7 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
         subtitle_button = gr.Button("1. 生成字幕", variant="primary")
         highlight_button = gr.Button("2. 洗稿、提取高光与关键词")
         video_button = gr.Button("3. 生成视频")
+        doctor_label_button = gr.Button("4. 强制烧录专家标签")
         clip_count_toggle_button = gr.Button("...", size="sm", elem_id="clip-count-toggle")
         resume_button = gr.Button("恢复/查询任务")
     with gr.Row():
@@ -667,6 +715,13 @@ with gr.Blocks(title="FunClip 三模块", css=OUTPUT_VIDEO_CSS) as app:
             library_video_input,
             video_input,
         ],
+        outputs=task_outputs,
+        show_progress="hidden",
+        queue=False,
+    )
+    doctor_label_button.click(
+        submit_doctor_label,
+        inputs=[video_output],
         outputs=task_outputs,
         show_progress="hidden",
         queue=False,
