@@ -50,7 +50,8 @@ def _clip_section(index: int, clip: dict[str, Any], video_file: str | None) -> l
     sound_status = sound_payload.get("status", {})
     visual_assets = _as_json(clip.get("visual_bindings")).get("placements", [])
     raw_highlight = _as_json(clip.get("raw_result"))
-    high_reason = _text(raw_highlight.get("reason")) or _NO_REASON
+    high_reason = _text(clip.get("highlight_reason")) or _text(raw_highlight.get("reason")) or _NO_REASON
+    question = _text(clip.get("question")) or "（未返回可回答的问题）"
 
     lines = ["## 素材 {}".format(index)]
     if video_file:
@@ -62,6 +63,7 @@ def _clip_section(index: int, clip: dict[str, Any], video_file: str | None) -> l
             lines.append("- `[{} - {}]`".format(start, end))
     else:
         lines.append("- 未选择有效高光时间段。")
+    lines.append("- 可回答的问题：{}".format(question))
     lines.append("- 理由：{}".format(high_reason))
 
     lines.extend(["", "### 高光关键词", ""])

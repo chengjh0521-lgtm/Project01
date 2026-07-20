@@ -608,7 +608,7 @@ with gr.Blocks(title="FunClip 四模块", css=OUTPUT_VIDEO_CSS) as app:
     subtitle_output = gr.Textbox(label="字幕1：ASR 原始字幕", lines=12)
     corrected_output = gr.Textbox(label="字幕2：DeepSeek 洗稿字幕", lines=12)
     corrected_file_output = gr.File(label="字幕2：已保存 SRT（可下载）")
-    highlight_output = gr.Textbox(label="字幕3：高光时间戳与对应字幕", lines=12)
+    highlight_output = gr.Textbox(label="字幕3：可回答的问题、高光时间戳与对应字幕", lines=12)
     keyword_count_input = gr.Number(label="预期关键词数量", value=8, precision=0, minimum=1)
     clip_count_input = gr.Number(
         label="最大输出视频数量", value=1, precision=0, minimum=1, maximum=8, visible=False

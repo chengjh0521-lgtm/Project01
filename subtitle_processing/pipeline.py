@@ -637,7 +637,13 @@ def _process_from_corrected_subtitles(
         if status_callback:
             status_callback("阶段 3-5/5：已完成第 {} / {} 条素材的关键词、音效与 GIF/PNG 选择。".format(index, len(candidates)))
     display = "\n\n".join(
-        "素材 {}：\n{}".format(index, candidate["raw_result"])
+        "素材 {}\n可回答的问题：{}\n\n高光时间戳：\n{}\n\n字幕3：\n{}\n\n选择理由：{}".format(
+            index,
+            candidate.get("question", "未返回问题"),
+            "\n".join("[{}-{}]".format(start, end) for start, end in candidate["ranges"]),
+            candidate.get("highlight_srt", ""),
+            candidate.get("highlight_reason", "未返回理由"),
+        )
         for index, candidate in enumerate(candidates, start=1)
     )
     # Keep subtitle 2 with the render plan so the web layer can rebuild the
