@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from video_generation.question_intro import (
     MAX_QUESTION_INTRO_SECONDS,
+    _wrap_question_text,
     _write_question_ass,
     create_question_intro,
     prepend_question_intro,
@@ -12,6 +13,13 @@ from video_generation.question_intro import (
 
 
 class QuestionIntroTests(unittest.TestCase):
+    def test_question_text_wraps_to_at_most_six_characters_per_line(self):
+        wrapped = _wrap_question_text("糖尿病患者能不能喝酒呢？")
+
+        lines = wrapped.split("\\N")
+        self.assertEqual("".join(lines), "糖尿病患者能不能喝酒呢？")
+        self.assertTrue(all(len(line) <= 6 for line in lines))
+
     def test_question_text_is_double_sized_and_starts_at_half_height(self):
         with tempfile.TemporaryDirectory() as temporary:
             ass_path = Path(temporary) / "question.ass"

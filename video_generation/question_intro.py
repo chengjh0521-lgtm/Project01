@@ -16,6 +16,7 @@ DEFAULT_TTS_VOICE = "zh-CN-YunxiNeural"
 DEFAULT_TTS_RATE = "+35%"
 FAST_TTS_RATE = "+60%"
 MAX_QUESTION_INTRO_SECONDS = 3.0
+MAX_QUESTION_LINE_CHARACTERS = 6
 
 
 def question_intro_background_path() -> Path:
@@ -28,10 +29,18 @@ def _escape_filter_path(path: Path) -> str:
 
 
 def _wrap_question_text(question: str) -> str:
-    midpoint = (len(question) + 1) // 2
-    if len(question) <= 10:
-        return question
-    return "{}\\N{}".format(question[:midpoint], question[midpoint:])
+    lines, remaining = [], question
+    while len(remaining) > MAX_QUESTION_LINE_CHARACTERS:
+        candidates = [
+            index + 1 for index, char in enumerate(remaining[:MAX_QUESTION_LINE_CHARACTERS])
+            if char in "，、；：,;:"
+        ]
+        split_at = candidates[-1] if candidates else MAX_QUESTION_LINE_CHARACTERS
+        lines.append(remaining[:split_at])
+        remaining = remaining[split_at:]
+    if remaining:
+        lines.append(remaining)
+    return "\\N".join(lines)
 
 
 def _write_question_ass(question: str, ass_path: Path, width: int, height: int) -> None:
