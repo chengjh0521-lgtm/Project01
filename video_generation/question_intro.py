@@ -87,6 +87,28 @@ def _audio_duration_seconds(audio_path: Path) -> float:
         raise RuntimeError("Question audio has no usable duration.") from exc
 
 
+def _video_dimensions(video_path: Path) -> tuple[int, int]:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise RuntimeError("ffprobe is unavailable; install FFmpeg before adding a question intro.")
+    completed = subprocess.run(
+        [
+            ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+            "-of", "csv=p=0:s=x", str(video_path),
+        ],
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    if completed.returncode:
+        raise RuntimeError("Could not read source video dimensions: {}".format(completed.stderr[-500:]))
+    try:
+        width, height = (int(value) for value in completed.stdout.strip().split("x", 1))
+    except ValueError as exc:
+        raise RuntimeError("Source video has no usable dimensions.") from exc
+    return width, height
+
+
 def create_question_intro(
         question: str,
         *,
@@ -157,6 +179,46 @@ def create_question_intro(
         raise RuntimeError("Question intro render produced no usable output: {}".format(destination))
     logging.warning("Question-intro prototype completed: %s", destination)
     return str(destination)
+
+
+def prepend_question_intro(video_path: str | Path, question: str) -> str:
+    """Create and prepend a narrated question card, keeping the main video's dimensions."""
+    source = Path(video_path).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError("Video for question intro is missing: {}".format(source))
+    width, height = _video_dimensions(source)
+    intro = create_question_intro(
+        question,
+        output_path=source.with_name("{}_question_intro.mp4".format(source.stem)),
+        width=width,
+        height=height,
+    )
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("FFmpeg is unavailable; cannot prepend a question intro.")
+    output = source.with_name("{}_with_question_intro{}".format(source.stem, source.suffix))
+    video_filter = "fps=30,scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih):color=black,format=yuv420p"
+    audio_filter = "aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo"
+    filter_graph = ";".join([
+        "[0:v]{}[intro_v]".format(video_filter.format(width, height, width, height)),
+        "[0:a]{}[intro_a]".format(audio_filter),
+        "[1:v]{}[main_v]".format(video_filter.format(width, height, width, height)),
+        "[1:a]{}[main_a]".format(audio_filter),
+        "[intro_v][intro_a][main_v][main_a]concat=n=2:v=1:a=1[outv][outa]",
+    ])
+    command = [
+        ffmpeg, "-y", "-i", str(intro), "-i", str(source), "-filter_complex", filter_graph,
+        "-map", "[outv]", "-map", "[outa]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+    ]
+    logging.warning("Prepending question intro: source=%s, question=%s, output=%s", source, question, output)
+    completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
+    if completed.returncode:
+        raise RuntimeError("Question intro concat failed: {}".format(completed.stderr[-1000:]))
+    if not output.is_file() or output.stat().st_size == 0:
+        raise RuntimeError("Question intro concat produced no usable output: {}".format(output))
+    logging.warning("Question intro prepended: %s", output)
+    return str(output)
 
 
 def main() -> None:

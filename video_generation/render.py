@@ -14,6 +14,7 @@ from funclip_loader import get_launch
 from subtitle_processing.sound_effect_binding import resolve_sound_effect_file
 from subtitle_processing.visual_asset_binding import get_visual_asset_definition, resolve_visual_asset_file
 from video_generation.doctor_label import apply_doctor_label
+from video_generation.question_intro import prepend_question_intro
 
 
 def _escape_filter_path(path: Path) -> str:
@@ -410,6 +411,7 @@ def render_highlight_video(
         keywords: str | None = None,
         sound_bindings: str | None = None,
         visual_bindings: str | None = None,
+        question: str | None = None,
         start_offset_ms: int = 0,
         end_offset_ms: int = 100):
     """Render LLM timestamp ranges. Returns video, audio, message, and clip SRT."""
@@ -427,9 +429,10 @@ def render_highlight_video(
         captioned_video = _burn_srt_with_ffmpeg(video, clip_srt, keywords)
         visual_video, visual_count = _overlay_visual_assets(captioned_video, clip_srt, visual_bindings)
         mixed_video, sound_count = _mix_sound_effects(visual_video, clip_srt, sound_bindings)
-        final_video = apply_doctor_label(mixed_video)
-        return final_video, audio, "{}; burned subtitles via FFmpeg; {} GIF/PNG assets overlaid; fixed doctor label=True; {} sound effects mixed".format(
-            message, visual_count, sound_count
+        intro_video = prepend_question_intro(mixed_video, question) if str(question or "").strip() else mixed_video
+        final_video = apply_doctor_label(intro_video)
+        return final_video, audio, "{}; burned subtitles via FFmpeg; question intro={}; {} GIF/PNG assets overlaid; fixed doctor label=True; {} sound effects mixed".format(
+            message, bool(str(question or "").strip()), visual_count, sound_count
         ), clip_srt
     return launch.AI_clip(
         llm_result, "", "", start_offset_ms, end_offset_ms,

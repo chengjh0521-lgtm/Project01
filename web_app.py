@@ -422,6 +422,7 @@ def submit_render(llm_result, video_state, keywords, sound_bindings, library_vid
                     keywords=clip["keywords"],
                     sound_bindings=clip["sound_bindings"],
                     visual_bindings=clip.get("visual_bindings"),
+                    question=clip.get("question"),
                 )
                 if video:
                     videos.append(video)

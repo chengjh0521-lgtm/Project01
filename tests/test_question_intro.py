@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from video_generation.question_intro import MAX_QUESTION_INTRO_SECONDS, create_question_intro
+from video_generation.question_intro import MAX_QUESTION_INTRO_SECONDS, create_question_intro, prepend_question_intro
 
 
 class QuestionIntroTests(unittest.TestCase):
@@ -45,6 +45,35 @@ class QuestionIntroTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(ValueError, "above the 3.0s limit"):
                     create_question_intro("糖尿病能喝酒吗？", background_path=background)
+
+    def test_prepends_the_intro_before_the_main_video(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "clip.mp4"
+            intro = root / "clip_question_intro.mp4"
+            output = root / "clip_with_question_intro.mp4"
+            source.write_bytes(b"video")
+            intro.write_bytes(b"intro")
+
+            def concat(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"combined")
+                class Completed:
+                    returncode = 0
+                    stderr = ""
+                return Completed()
+
+            with patch("video_generation.question_intro._video_dimensions", return_value=(1080, 1920)), patch(
+                "video_generation.question_intro.create_question_intro", return_value=str(intro)
+            ), patch("video_generation.question_intro.shutil.which", return_value="ffmpeg"), patch(
+                "video_generation.question_intro.subprocess.run", side_effect=concat
+            ) as run:
+                result = prepend_question_intro(source, "糖尿病能喝酒吗？")
+
+        command = run.call_args.args[0]
+        filters = command[command.index("-filter_complex") + 1]
+        self.assertEqual(Path(result).name, "clip_with_question_intro.mp4")
+        self.assertIn(str(intro), command)
+        self.assertIn("concat=n=2:v=1:a=1", filters)
 
 
 if __name__ == "__main__":
