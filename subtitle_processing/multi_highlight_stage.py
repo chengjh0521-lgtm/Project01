@@ -12,6 +12,7 @@ TIME_RE = re.compile(
     r"\[?\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*(?:-|-->|~|\u2013|\u2014)\s*"
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*\]?"
 )
+MAX_QUESTION_CHARACTERS = 18
 
 SYSTEM_PROMPT = """
 你是医学科普短视频选题与剪辑分析器。请从完整 SRT 中选择一段适合传播的独立内容。
@@ -23,7 +24,7 @@ SYSTEM_PROMPT = """
 只返回一个合法 JSON 对象，不得输出 Markdown 或其他解释：
 {"question":"糖尿病患者能不能喝酒？","ranges":[{"start":"00:00:01,000","end":"00:00:12,500"}],"reason":"该片段给出明确结论、风险原因和可执行建议"}
 
-question 必须是非空字符串；start 和 end 必须完全来自输入 SRT 时间轴。无法选择一个能完整回答明确问题的片段时，返回：
+question 必须是非空字符串，去除空白后最多 18 个字符（包括标点）；start 和 end 必须完全来自输入 SRT 时间轴。无法选择一个能完整回答明确问题的片段时，返回：
 {"question":"","ranges":[],"reason":""}
 """.strip()
 
@@ -56,6 +57,10 @@ def _load_json_object(text: str) -> dict | None:
         if isinstance(payload, dict):
             return payload
     return None
+
+
+def _valid_question(question: str) -> bool:
+    return bool(question) and len(re.sub(r"\s+", "", question)) <= MAX_QUESTION_CHARACTERS
 
 
 def parse_highlight_selection(text: str) -> dict:
@@ -147,13 +152,13 @@ def select_multiple(
             question = selection["question"]
             reason = selection["reason"]
             overlap = overlap_ratio(ranges, selected_ranges) if ranges else 1.0
-            if ranges and question and overlap <= max_overlap:
+            if ranges and _valid_question(question) and overlap <= max_overlap:
                 break
             logging.warning(
-                "Multi-highlight candidate %d attempt %d rejected: question=%s, ranges=%d, overlap=%.1f%%.",
-                number, attempt, bool(question), len(ranges), overlap * 100,
+                "Multi-highlight candidate %d attempt %d rejected: valid_question=%s, ranges=%d, overlap=%.1f%%.",
+                number, attempt, _valid_question(question), len(ranges), overlap * 100,
             )
-        if not ranges or not question or overlap_ratio(ranges, selected_ranges) > max_overlap:
+        if not ranges or not _valid_question(question) or overlap_ratio(ranges, selected_ranges) > max_overlap:
             break
         selected.append({
             "id": "clip_{:02d}".format(number),

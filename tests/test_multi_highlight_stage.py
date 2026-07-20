@@ -16,14 +16,14 @@ class MultiHighlightStageTests(unittest.TestCase):
 
     def test_parse_highlight_selection_keeps_the_question_and_reason(self):
         response = (
-            '{"question":"Can diabetes patients drink alcohol?",'
+            '{"question":"糖尿病能喝酒吗？",'
             '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],'
             '"reason":"Clear recommendation."}'
         )
         self.assertEqual(
             parse_highlight_selection(response),
             {
-                "question": "Can diabetes patients drink alcohol?",
+                "question": "糖尿病能喝酒吗？",
                 "ranges": [("00:00:01,000", "00:00:42,000")],
                 "reason": "Clear recommendation.",
             },
@@ -32,25 +32,37 @@ class MultiHighlightStageTests(unittest.TestCase):
     def test_select_multiple_retries_after_invalid_model_response(self):
         responses = iter([
             "I cannot choose a clip.",
-            '{"question":"Can diabetes patients drink alcohol?",'
+            '{"question":"糖尿病能喝酒吗？",'
             '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Clear answer."}',
         ])
 
         selected = select_multiple("1\n00:00:01,000 --> 00:00:42,000\ntext\n", 1, lambda *_: next(responses))
 
         self.assertEqual(selected[0]["ranges"], [("00:00:01,000", "00:00:42,000")])
-        self.assertEqual(selected[0]["question"], "Can diabetes patients drink alcohol?")
+        self.assertEqual(selected[0]["question"], "糖尿病能喝酒吗？")
 
     def test_select_multiple_retries_when_a_question_is_missing(self):
         responses = iter([
             '{"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}]}',
-            '{"question":"What should patients do?",'
+            '{"question":"患者应该怎么做？",'
             '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Clear answer."}',
         ])
 
         selected = select_multiple("1\n00:00:01,000 --> 00:00:42,000\ntext\n", 1, lambda *_: next(responses))
 
-        self.assertEqual(selected[0]["question"], "What should patients do?")
+        self.assertEqual(selected[0]["question"], "患者应该怎么做？")
+
+    def test_select_multiple_retries_when_a_question_exceeds_the_intro_limit(self):
+        responses = iter([
+            '{"question":"糖尿病患者日常生活中究竟能不能适量喝酒呢？",'
+            '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Too long."}',
+            '{"question":"糖尿病能喝酒吗？",'
+            '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Short answer."}',
+        ])
+
+        selected = select_multiple("1\n00:00:01,000 --> 00:00:42,000\ntext\n", 1, lambda *_: next(responses))
+
+        self.assertEqual(selected[0]["question"], "糖尿病能喝酒吗？")
 
 
 if __name__ == "__main__":

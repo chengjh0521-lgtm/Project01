@@ -14,3 +14,6 @@ huggingface_hub==0.25.2
 
 # FunClip's audio stack uses numba, whose supported NumPy range excludes 2.5.
 numpy==1.26.4
+
+# Prototype question-card narration.
+edge-tts==7.2.8
