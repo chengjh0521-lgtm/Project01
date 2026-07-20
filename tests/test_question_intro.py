@@ -73,6 +73,7 @@ class QuestionIntroTests(unittest.TestCase):
         filters = command[command.index("-filter_complex") + 1]
         self.assertEqual(Path(result).name, "clip_with_question_intro.mp4")
         self.assertIn(str(intro), command)
+        self.assertIn("setsar=1", filters)
         self.assertIn("concat=n=2:v=1:a=1", filters)
 
 

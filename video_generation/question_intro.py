@@ -197,7 +197,7 @@ def prepend_question_intro(video_path: str | Path, question: str) -> str:
     if not ffmpeg:
         raise RuntimeError("FFmpeg is unavailable; cannot prepend a question intro.")
     output = source.with_name("{}_with_question_intro{}".format(source.stem, source.suffix))
-    video_filter = "fps=30,scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih):color=black,format=yuv420p"
+    video_filter = "fps=30,scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih):color=black,format=yuv420p,setsar=1"
     audio_filter = "aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo"
     filter_graph = ";".join([
         "[0:v]{}[intro_v]".format(video_filter.format(width, height, width, height)),
