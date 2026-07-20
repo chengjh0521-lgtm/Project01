@@ -26,6 +26,8 @@ _SRT_TIME_RE = re.compile(
     r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*$"
 )
+_MAX_CAPTION_LINE_CHARACTERS = 15
+_CAPTION_CONNECTORS = ("但是", "所以", "因为", "如果", "而且", "或者", "并且", "然后", "以及", "同时", "不过", "而是", "还是")
 
 
 def _ass_timecode(value: str) -> str:
@@ -290,17 +292,30 @@ def _caption_font_size(text: str) -> int:
 
 
 def _wrap_caption_two_lines(text: str) -> str:
-    """Split a long cue into two balanced visual lines without changing timing."""
+    """Split a long cue at a natural phrase boundary without changing timing."""
     compact = "".join(part.strip() for part in text.splitlines())
-    if len(compact) <= 20:
+    if len(compact) <= _MAX_CAPTION_LINE_CHARACTERS:
         return compact
     midpoint = len(compact) // 2
-    candidates = [
-        index for index, char in enumerate(compact)
-        if char in "，。！？；：、,.!?;: " and 6 <= index <= len(compact) - 6
-    ]
+    candidates: list[tuple[int, int]] = []
+    for index, char in enumerate(compact, start=1):
+        if char in "，。！？；：、,.!?;: " and 5 <= index <= len(compact) - 5:
+            candidates.append((index, 0))
+    for connector in _CAPTION_CONNECTORS:
+        offset = compact.find(connector)
+        while offset >= 5:
+            if offset <= len(compact) - 5:
+                candidates.append((offset, 1))
+            offset = compact.find(connector, offset + len(connector))
     if candidates:
-        split_at = min(candidates, key=lambda index: abs(index - midpoint)) + 1
+        split_at, _ = min(
+            candidates,
+            key=lambda item: (
+                max(0, max(item[0], len(compact) - item[0]) - _MAX_CAPTION_LINE_CHARACTERS),
+                abs(item[0] - midpoint),
+                item[1],
+            ),
+        )
     else:
         split_at = midpoint
     return "{}\n{}".format(compact[:split_at].rstrip(), compact[split_at:].lstrip())
