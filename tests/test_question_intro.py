@@ -3,10 +3,24 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from video_generation.question_intro import MAX_QUESTION_INTRO_SECONDS, create_question_intro, prepend_question_intro
+from video_generation.question_intro import (
+    MAX_QUESTION_INTRO_SECONDS,
+    _write_question_ass,
+    create_question_intro,
+    prepend_question_intro,
+)
 
 
 class QuestionIntroTests(unittest.TestCase):
+    def test_question_text_is_double_sized_and_starts_at_half_height(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ass_path = Path(temporary) / "question.ass"
+            _write_question_ass("糖尿病能喝酒吗？", ass_path, 1080, 1920)
+            ass = ass_path.read_text(encoding="utf-8")
+
+        self.assertIn("Style: Question,STHeiti,152,", ass)
+        self.assertIn(",1,2,1,8,80,80,960,1", ass)
+
     def test_creates_a_short_static_video_with_the_question_audio(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

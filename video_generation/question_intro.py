@@ -35,7 +35,9 @@ def _wrap_question_text(question: str) -> str:
 
 
 def _write_question_ass(question: str, ass_path: Path, width: int, height: int) -> None:
-    font_size = max(44, min(80, round(min(width, height) * 0.07)))
+    base_font_size = max(44, min(80, round(min(width, height) * 0.07)))
+    font_size = base_font_size * 2
+    top_margin = round(height * 0.50)
     escaped = question.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
     header = """[Script Info]
 ScriptType: v4.00+
@@ -44,12 +46,12 @@ PlayResY: {height}
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Question,STHeiti,{font_size},&H00FFFFFF,&H00000000,&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,2,1,5,80,80,0,1
+Style: Question,STHeiti,{font_size},&H00FFFFFF,&H00000000,&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,2,1,8,80,80,{top_margin},1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 Dialogue: 0,0:00:00.00,0:00:03.00,Question,,0,0,0,,{text}
-""".format(width=width, height=height, font_size=font_size, text=_wrap_question_text(escaped))
+""".format(width=width, height=height, font_size=font_size, top_margin=top_margin, text=_wrap_question_text(escaped))
     ass_path.write_text(header, encoding="utf-8")
 
 
