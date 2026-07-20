@@ -31,6 +31,7 @@ class QuestionIntroTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(Path(result).name, "question.mp4")
         self.assertIn("-loop", command)
+        self.assertIn("subtitles=filename=", command[command.index("-filter:v") + 1])
         self.assertIn("-t", command)
         self.assertLessEqual(float(command[command.index("-t") + 1]), MAX_QUESTION_INTRO_SECONDS)
 

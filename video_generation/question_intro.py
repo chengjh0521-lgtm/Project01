@@ -23,6 +23,36 @@ def question_intro_background_path() -> Path:
     return Path(configured).expanduser() if configured else DEFAULT_QUESTION_BACKGROUND
 
 
+def _escape_filter_path(path: Path) -> str:
+    return path.resolve().as_posix().replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+
+def _wrap_question_text(question: str) -> str:
+    midpoint = (len(question) + 1) // 2
+    if len(question) <= 10:
+        return question
+    return "{}\\N{}".format(question[:midpoint], question[midpoint:])
+
+
+def _write_question_ass(question: str, ass_path: Path, width: int, height: int) -> None:
+    font_size = max(44, min(80, round(min(width, height) * 0.07)))
+    escaped = question.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
+    header = """[Script Info]
+ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Question,STHeiti,{font_size},&H00FFFFFF,&H00000000,&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,2,1,5,80,80,0,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+Dialogue: 0,0:00:00.00,0:00:03.00,Question,,0,0,0,,{text}
+""".format(width=width, height=height, font_size=font_size, text=_wrap_question_text(escaped))
+    ass_path.write_text(header, encoding="utf-8")
+
+
 def _synthesize_question_audio(question: str, audio_path: Path, voice: str, rate: str) -> None:
     try:
         import edge_tts
@@ -82,6 +112,8 @@ def create_question_intro(
     destination = destination.resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
     audio_path = destination.with_suffix(".mp3")
+    subtitle_path = destination.with_suffix(".ass")
+    _write_question_ass(text, subtitle_path, width, height)
 
     _synthesize_question_audio(text, audio_path, voice, DEFAULT_TTS_RATE)
     duration = _audio_duration_seconds(audio_path)
@@ -102,9 +134,15 @@ def create_question_intro(
         "scale={}:{}:force_original_aspect_ratio=decrease,"
         "pad={}:{}:(ow-iw)/2:(oh-ih):color=black,format=yuv420p"
     ).format(width, height, width, height)
+    subtitle_filter = "subtitles=filename={}:charenc=UTF-8".format(_escape_filter_path(subtitle_path))
+    launch_dir = os.environ.get("FUNCLIP_LAUNCH_DIR")
+    if launch_dir:
+        font_dir = Path(launch_dir).resolve().parent / "font"
+        if font_dir.is_dir():
+            subtitle_filter += ":fontsdir={}".format(_escape_filter_path(font_dir))
     command = [
         ffmpeg, "-y", "-loop", "1", "-framerate", "30", "-i", str(background), "-i", str(audio_path),
-        "-filter:v", visual_filter, "-map", "0:v:0", "-map", "1:a:0",
+        "-filter:v", "{},{}".format(visual_filter, subtitle_filter), "-map", "0:v:0", "-map", "1:a:0",
         "-t", "{:.3f}".format(duration), "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
         "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(destination),
     ]
