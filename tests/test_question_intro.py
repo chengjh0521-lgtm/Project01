@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from video_generation.question_intro import (
     MAX_QUESTION_INTRO_SECONDS,
+    QUESTION_TEXT_ASS_COLOR,
     _wrap_question_text,
     _write_question_ass,
     create_question_intro,
@@ -27,6 +28,7 @@ class QuestionIntroTests(unittest.TestCase):
             ass = ass_path.read_text(encoding="utf-8")
 
         self.assertIn("Style: Question,STHeiti,152,", ass)
+        self.assertIn(",{},".format(QUESTION_TEXT_ASS_COLOR), ass)
         self.assertIn(",1,2,1,8,80,80,960,1", ass)
 
     def test_creates_a_short_static_video_with_the_question_audio(self):
