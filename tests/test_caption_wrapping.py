@@ -1,6 +1,8 @@
+import tempfile
 import unittest
+from pathlib import Path
 
-from video_generation.render import _wrap_caption_two_lines
+from video_generation.render import _strip_caption_fillers, _write_ass_subtitles, _wrap_caption_two_lines
 
 
 class CaptionWrappingTests(unittest.TestCase):
@@ -24,6 +26,23 @@ class CaptionWrappingTests(unittest.TestCase):
         self.assertEqual(wrapped.replace("\n", ""), text)
         self.assertIn("\n", wrapped)
         self.assertTrue(wrapped.split("\n")[1].startswith("但是"))
+
+    def test_removes_spoken_fillers_only_from_display_text(self):
+        self.assertEqual(
+            _strip_caption_fillers("嗯，呃，糖尿病患者啊，不能喝酒。"),
+            "糖尿病患者，不能喝酒。",
+        )
+
+    def test_ass_caption_uses_cleaned_display_text(self):
+        srt = "1\n00:00:00,000 --> 00:00:03,000\n嗯，糖尿病患者啊，不能喝酒。\n"
+        with tempfile.TemporaryDirectory() as temporary:
+            ass_path = Path(temporary) / "captions.ass"
+            count = _write_ass_subtitles(srt, ass_path, [])
+            rendered = ass_path.read_text(encoding="utf-8")
+
+        self.assertEqual(count, 1)
+        self.assertIn("糖尿病患者，不能喝酒。", rendered)
+        self.assertNotIn("嗯，", rendered)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ _SRT_TIME_RE = re.compile(
 )
 _MAX_CAPTION_LINE_CHARACTERS = 15
 _CAPTION_CONNECTORS = ("但是", "所以", "因为", "如果", "而且", "或者", "并且", "然后", "以及", "同时", "不过", "而是", "还是")
+_CAPTION_PUNCTUATION = "，。！？；：、,.!?;:"
 
 
 def _ass_timecode(value: str) -> str:
@@ -322,6 +323,24 @@ def _wrap_caption_two_lines(text: str) -> str:
     return "{}\n{}".format(compact[:split_at].rstrip(), compact[split_at:].lstrip())
 
 
+def _strip_caption_fillers(text: str) -> str:
+    """Remove spoken filler particles only from the burned display caption."""
+    compact = "".join(part.strip() for part in str(text or "").splitlines())
+    while True:
+        cleaned = re.sub(r"^(?:嗯+|呃+|啊+|呐+)[\s，、,]*", "", compact)
+        if cleaned == compact:
+            break
+        compact = cleaned
+    compact = re.sub(
+        r"(?<=[{}])(?:嗯+|呃+|啊+|呐+)[\s，、,]*".format(re.escape(_CAPTION_PUNCTUATION)),
+        "",
+        compact,
+    )
+    compact = re.sub(r"(?:嗯+|呃+|啊+|呐+)(?=[{}]|$)".format(re.escape(_CAPTION_PUNCTUATION)), "", compact)
+    compact = re.sub(r"[，、,]{2,}", "，", compact)
+    return compact.strip(" \t，、,")
+
+
 def _highlight_ass_text(text: str, keywords: list[str]) -> str:
     escaped = (
         text.replace("\\", r"\\")
@@ -352,17 +371,20 @@ Style: Default,STHeiti,48,&H00FFFFFF,&H0000FFFF,&H00101010,&H80000000,0,0,0,0,10
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 """
-    events = [
-        "Dialogue: 0,{},{},Default,,0,0,0,,{{\\fs{}}}{}".format(
+    events = []
+    for start, end, text in cues:
+        display_text = _strip_caption_fillers(text)
+        if not display_text:
+            continue
+        wrapped_text = _wrap_caption_two_lines(display_text)
+        events.append("Dialogue: 0,{},{},Default,,0,0,0,,{{\\fs{}}}{}".format(
             _ass_timecode(start),
             _ass_timecode(end),
-            _caption_font_size(_wrap_caption_two_lines(text)),
-            _highlight_ass_text(_wrap_caption_two_lines(text), keywords),
-        )
-        for start, end, text in cues
-    ]
+            _caption_font_size(wrapped_text),
+            _highlight_ass_text(wrapped_text, keywords),
+        ))
     ass_file.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
-    return len(cues)
+    return len(events)
 
 
 def _burn_srt_with_ffmpeg(video_path: str | Path, clip_srt: str, keywords: str | None = None) -> str:
