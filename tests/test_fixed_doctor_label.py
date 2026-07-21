@@ -28,6 +28,7 @@ class FixedDoctorLabelTests(unittest.TestCase):
         self.assertEqual(Path(result).name, "clip_label.mp4")
         self.assertIn("scale=67:-1", filters)
         self.assertIn("overlay=x=20:y=20", filters)
+        self.assertIn("format=auto:alpha=straight", filters)
         self.assertIn(str(label), command)
 
     def test_label_failure_is_not_silently_returned_as_a_success(self):

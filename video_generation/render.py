@@ -218,7 +218,8 @@ def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_binding
         else:
             command.extend(["-loop", "1", "-t", "{:.3f}".format(duration), "-i", str(asset_file)])
         asset_label, output_label = "asset{}".format(index), "visual{}".format(index)
-        asset_filter = "[{}:v]fps=15,scale=260:-1,format=rgba".format(index)
+        # Keep PNG/GIF alpha through scaling; FFmpeg otherwise may flatten it on some builds.
+        asset_filter = "[{}:v]fps=15,format=rgba,scale=260:-1:flags=lanczos,setsar=1".format(index)
         if event["requires_chroma_key"]:
             asset_filter += ",chromakey=0x00FF00:0.16:0.08"
         asset_filter += ",trim=duration={:.3f},setpts=PTS-STARTPTS+{:.3f}/TB[{}]".format(
@@ -227,7 +228,7 @@ def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_binding
         x, y = _visual_position(str(event["position"]))
         filters.extend([
             asset_filter,
-            "[{}][{}]overlay=x={}:y={}:eof_action=pass:shortest=0[{}]".format(
+            "[{}][{}]overlay=x={}:y={}:eof_action=pass:shortest=0:format=auto:alpha=straight[{}]".format(
                 previous, asset_label, x, y, output_label
             ),
         ])

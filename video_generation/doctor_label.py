@@ -27,8 +27,8 @@ def apply_doctor_label(video_path: str | Path, label_path: str | Path | None = N
 
     output = source.with_name("{}_label{}".format(source.stem, source.suffix))
     filter_graph = (
-        "[1:v]scale={}:-1,format=rgba[label];"
-        "[0:v][label]overlay=x=20:y=20:eof_action=pass:repeatlast=1[outv]"
+        "[1:v]format=rgba,scale={}:-1:flags=lanczos,setsar=1[label];"
+        "[0:v][label]overlay=x=20:y=20:eof_action=pass:repeatlast=1:format=auto:alpha=straight[outv]"
     ).format(DOCTOR_LABEL_WIDTH_PIXELS)
     command = [
         ffmpeg, "-y", "-i", str(source), "-loop", "1", "-framerate", "30", "-i", str(label),
