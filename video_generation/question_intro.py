@@ -18,7 +18,11 @@ DEFAULT_TTS_VOICE = "zh-CN-YunxiNeural"
 DEFAULT_TTS_RATE = "+35%"
 FAST_TTS_RATE = "+60%"
 MAX_QUESTION_INTRO_SECONDS = 3.0
-MAX_QUESTION_LINE_CHARACTERS = 6
+# The intro question uses a deliberately large font. Five Chinese characters
+# leave room for outline and shadow, while six can cause ASS to push a trailing
+# question mark onto a line by itself on narrow portrait videos.
+MAX_QUESTION_LINE_CHARACTERS = 5
+_QUESTION_TRAILING_PUNCTUATION = "？?！!。"
 QUESTION_TEXT_ASS_COLOR = "&H0000FFFF"
 
 
@@ -32,17 +36,24 @@ def _escape_filter_path(path: Path) -> str:
 
 
 def _wrap_question_text(question: str) -> str:
-    lines, remaining = [], question
+    lines, remaining = [], "".join(str(question or "").split())
     while len(remaining) > MAX_QUESTION_LINE_CHARACTERS:
         candidates = [
             index + 1 for index, char in enumerate(remaining[:MAX_QUESTION_LINE_CHARACTERS])
             if char in "，、；：,;:"
         ]
         split_at = candidates[-1] if candidates else MAX_QUESTION_LINE_CHARACTERS
+        # Never allow a trailing question mark or other terminal punctuation
+        # to become an orphaned third line.
+        if len(remaining) > split_at and remaining[split_at] in _QUESTION_TRAILING_PUNCTUATION:
+            split_at += 1
         lines.append(remaining[:split_at])
         remaining = remaining[split_at:]
     if remaining:
-        lines.append(remaining)
+        if lines and len(remaining) == 1 and remaining in _QUESTION_TRAILING_PUNCTUATION:
+            lines[-1] += remaining
+        else:
+            lines.append(remaining)
     return "\\N".join(lines)
 
 

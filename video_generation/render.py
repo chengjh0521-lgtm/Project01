@@ -337,52 +337,89 @@ def _caption_font_size(text: str) -> int:
     return CAPTION_FONT_SIZE
 
 
-def _wrap_caption_two_lines(text: str) -> str:
-    """Split a long cue at a natural phrase boundary without changing timing."""
+def _caption_split_at(text: str, maximum: int) -> int:
+    """Find a readable one-line break point, preferring punctuation near the end."""
     compact = "".join(part.strip() for part in text.splitlines())
-    if len(compact) <= _MAX_CAPTION_LINE_CHARACTERS:
-        return compact
-    midpoint = len(compact) // 2
+    if len(compact) <= maximum:
+        return len(compact)
+    midpoint = min(maximum, len(compact) // 2)
     candidates: list[tuple[int, int]] = []
     for index, char in enumerate(compact, start=1):
-        if char in "，。！？；：、,.!?;: " and 5 <= index <= len(compact) - 5:
+        if char in "，。！？；：、,.!?;: " and 5 <= index <= maximum:
             candidates.append((index, 0))
     for connector in _CAPTION_CONNECTORS:
         offset = compact.find(connector)
         while offset >= 5:
-            if offset <= len(compact) - 5:
+            if offset <= maximum:
                 candidates.append((offset, 1))
             offset = compact.find(connector, offset + len(connector))
     if candidates:
         split_at, _ = min(
             candidates,
             key=lambda item: (
-                max(0, max(item[0], len(compact) - item[0]) - _MAX_CAPTION_LINE_CHARACTERS),
                 abs(item[0] - midpoint),
                 item[1],
             ),
         )
     else:
-        split_at = midpoint
-    return "{}\n{}".format(compact[:split_at].rstrip(), compact[split_at:].lstrip())
+        split_at = min(maximum, max(1, midpoint))
+    return split_at
+
+
+def _split_caption_one_line(text: str) -> list[str]:
+    """Break a cue into sequential, readable one-line subtitle events."""
+    remaining = "".join(part.strip() for part in str(text or "").splitlines())
+    lines = []
+    while remaining:
+        split_at = _caption_split_at(remaining, _MAX_CAPTION_LINE_CHARACTERS)
+        line, remaining = remaining[:split_at].rstrip(), remaining[split_at:].lstrip()
+        if line:
+            lines.append(line)
+        elif remaining:
+            remaining = remaining[1:]
+    return lines
+
+
+def _wrap_caption_two_lines(text: str) -> str:
+    """Compatibility helper for callers that still expect the old text wrapper."""
+    return "\n".join(_split_caption_one_line(text))
 
 
 def _strip_caption_fillers(text: str) -> str:
-    """Remove spoken filler particles only from the burned display caption."""
+    """Remove spoken filler particles only from the burned display caption.
+
+    This runs after the LLM sound-effect decision has already been saved, so
+    removing a filler cannot change sound-effect keyword matching or timing.
+    """
     compact = "".join(part.strip() for part in str(text or "").splitlines())
-    while True:
-        cleaned = re.sub(r"^(?:嗯+|呃+|啊+|呐+)[\s，、,]*", "", compact)
-        if cleaned == compact:
-            break
-        compact = cleaned
-    compact = re.sub(
-        r"(?<=[{}])(?:嗯+|呃+|啊+|呐+)[\s，、,]*".format(re.escape(_CAPTION_PUNCTUATION)),
-        "",
-        compact,
-    )
-    compact = re.sub(r"(?:嗯+|呃+|啊+|呐+)(?=[{}]|$)".format(re.escape(_CAPTION_PUNCTUATION)), "", compact)
+    compact = re.sub(r"[嗯呃啊呐呢]+", "", compact)
     compact = re.sub(r"[，、,]{2,}", "，", compact)
-    return compact.strip(" \t，、,")
+    return compact.strip(" \t，、,。！？；：")
+
+
+def _ass_timecode_from_ms(value: int) -> str:
+    centiseconds = max(0, int(round(value / 10)))
+    hours, remainder = divmod(centiseconds, 360_000)
+    minutes, remainder = divmod(remainder, 6_000)
+    seconds, hundredths = divmod(remainder, 100)
+    return "{}:{:02d}:{:02d}.{:02d}".format(hours, minutes, seconds, hundredths)
+
+
+def _caption_display_events(start: str, end: str, text: str) -> list[tuple[str, str, str]]:
+    """Assign each one-line display segment a consecutive portion of its cue."""
+    lines = _split_caption_one_line(text)
+    if not lines:
+        return []
+    start_ms, end_ms = _time_to_ms(start), _time_to_ms(end)
+    duration = max(1, end_ms - start_ms)
+    total_weight = max(1, sum(len(line) for line in lines))
+    events, cursor, consumed = [], start_ms, 0
+    for index, line in enumerate(lines):
+        consumed += len(line)
+        next_cursor = end_ms if index == len(lines) - 1 else start_ms + round(duration * consumed / total_weight)
+        events.append((_ass_timecode_from_ms(cursor), _ass_timecode_from_ms(max(cursor + 1, next_cursor)), line))
+        cursor = next_cursor
+    return events
 
 
 def _highlight_ass_text(text: str, keywords: list[str]) -> str:
@@ -544,15 +581,15 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
         display_text = _strip_caption_fillers(text)
         if not display_text:
             continue
-        wrapped_text = _wrap_caption_two_lines(display_text)
-        events.append("Dialogue: 0,{},{},Default,,0,0,0,,{{\\pos({},{})\\fs{}}}{}".format(
-            _ass_timecode(start),
-            _ass_timecode(end),
-            caption_x,
-            caption_y,
-            scaled_font_size(_caption_font_size(wrapped_text), width, height),
-            _highlight_ass_text(wrapped_text, keywords),
-        ))
+        for event_start, event_end, line in _caption_display_events(start, end, display_text):
+            events.append("Dialogue: 0,{},{},Default,,0,0,0,,{{\\pos({},{})\\fs{}}}{}".format(
+                event_start,
+                event_end,
+                caption_x,
+                caption_y,
+                scaled_font_size(_caption_font_size(line), width, height),
+                _highlight_ass_text(line, keywords),
+            ))
     ass_file.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
     return len(events)
 

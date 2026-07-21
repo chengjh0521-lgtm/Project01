@@ -21,6 +21,12 @@ class QuestionIntroTests(unittest.TestCase):
         self.assertEqual("".join(lines), "糖尿病患者能不能喝酒呢？")
         self.assertTrue(all(len(line) <= 6 for line in lines))
 
+    def test_question_mark_is_never_orphaned_on_its_own_line(self):
+        wrapped = _wrap_question_text("糖前期应该吃粗粮吗？")
+
+        self.assertNotIn("\\N？", wrapped)
+        self.assertNotIn("\\N?", wrapped)
+
     def test_question_text_is_double_sized_and_starts_at_half_height(self):
         with tempfile.TemporaryDirectory() as temporary:
             ass_path = Path(temporary) / "question.ass"

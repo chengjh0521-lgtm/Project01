@@ -4,6 +4,7 @@ from pathlib import Path
 
 from video_generation.render import (
     _caption_font_size,
+    _caption_display_events,
     _strip_caption_fillers,
     _title_lines,
     _write_ass_subtitles,
@@ -39,9 +40,20 @@ class CaptionWrappingTests(unittest.TestCase):
 
     def test_removes_spoken_fillers_only_from_display_text(self):
         self.assertEqual(
-            _strip_caption_fillers("嗯，呃，糖尿病患者啊，不能喝酒。"),
+            _strip_caption_fillers("嗯，呃，糖尿病患者啊，不能喝酒呢。"),
             "糖尿病患者，不能喝酒。",
         )
+
+    def test_long_caption_becomes_sequential_single_line_events(self):
+        events = _caption_display_events(
+            "00:00:00,000",
+            "00:00:04,000",
+            "糖尿病患者控制血糖很重要，但是不能因此过度焦虑。",
+        )
+
+        self.assertGreater(len(events), 1)
+        self.assertTrue(all("\n" not in line for _, _, line in events))
+        self.assertEqual("".join(line for _, _, line in events), "糖尿病患者控制血糖很重要，但是不能因此过度焦虑。")
 
     def test_ass_caption_uses_cleaned_display_text(self):
         srt = "1\n00:00:00,000 --> 00:00:03,000\n嗯，糖尿病患者啊，不能喝酒。\n"
