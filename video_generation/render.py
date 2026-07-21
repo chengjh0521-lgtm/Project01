@@ -684,8 +684,14 @@ def render_highlight_video(
         visual_video, visual_count = _overlay_visual_assets(captioned_video, clip_srt, visual_bindings)
         mixed_video, sound_count = _mix_sound_effects(visual_video, clip_srt, sound_bindings)
         layout_video = _burn_reference_layout(mixed_video, question)
-        intro_video = prepend_question_intro(layout_video, question) if str(question or "").strip() else layout_video
-        final_video = apply_doctor_label(intro_video)
+        # The expert label belongs to the main consultation footage only. Burn
+        # it before concatenation so the three-second question card stays clean.
+        labelled_main_video = apply_doctor_label(layout_video)
+        final_video = (
+            prepend_question_intro(labelled_main_video, question)
+            if str(question or "").strip()
+            else labelled_main_video
+        )
         return final_video, audio, "{}; burned subtitles via FFmpeg; reference layout=True; question intro={}; {} GIF/PNG assets overlaid; fixed doctor label=True; {} sound effects mixed".format(
             message, bool(str(question or "").strip()), visual_count, sound_count
         ), clip_srt
