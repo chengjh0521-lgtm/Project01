@@ -12,17 +12,26 @@ REFERENCE_HEIGHT = 1920
 TITLE_BACKGROUND_TOP = 160
 TITLE_BACKGROUND_HEIGHT = 248
 TITLE_BACKGROUND_COLOR = "white@0.56"
+TITLE_BACKGROUND_BORDER_COLOR = "black@0.22"
 
 TITLE_LINE_ONE = (540, 222)
 TITLE_LINE_TWO = (540, 322)
-CAPTION_CENTER = (540, 1270)
+CAPTION_CENTER = (540, 1250)
 DISCLAIMER_CENTER = (540, 1825)
-DOCTOR_LABEL_CENTER = (146, 710)
+DOCTOR_LABEL_CENTER = (146, 800)
 
 TITLE_FONT_SIZE = 88
+SINGLE_LINE_TITLE_FONT_SIZE = 118
 CAPTION_FONT_SIZE = 70
 DISCLAIMER_FONT_SIZE = 32
-DOCTOR_LABEL_SCALE = 0.36
+DOCTOR_LABEL_SCALE = 0.24
+
+# The source clinic footage is usually flatter and darker than the approved
+# portrait reference. Apply this once, before caption rendering, so text and
+# overlays keep their intended colours.
+VIDEO_BRIGHTNESS = 0.08
+VIDEO_CONTRAST = 1.03
+VIDEO_SATURATION = 1.04
 
 
 def scaled_position(position: tuple[int, int], width: int, height: int) -> tuple[int, int]:

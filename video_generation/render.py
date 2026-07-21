@@ -22,6 +22,7 @@ from video_generation.reference_layout import (
     DISCLAIMER_CENTER,
     DISCLAIMER_FONT_SIZE,
     TITLE_BACKGROUND_COLOR,
+    TITLE_BACKGROUND_BORDER_COLOR,
     TITLE_BACKGROUND_HEIGHT,
     TITLE_BACKGROUND_TOP,
     TITLE_FONT_SIZE,
@@ -29,6 +30,10 @@ from video_generation.reference_layout import (
     TITLE_LINE_TWO,
     REFERENCE_HEIGHT,
     REFERENCE_WIDTH,
+    SINGLE_LINE_TITLE_FONT_SIZE,
+    VIDEO_BRIGHTNESS,
+    VIDEO_CONTRAST,
+    VIDEO_SATURATION,
     scaled_font_size,
     scaled_position,
 )
@@ -433,9 +438,14 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
     )
     events = []
     if title_one:
+        title_size = TITLE_FONT_SIZE if title_two else SINGLE_LINE_TITLE_FONT_SIZE
+        title_y = title_one_y if title_two else round((TITLE_LINE_ONE[1] + TITLE_LINE_TWO[1]) / 2 * height / REFERENCE_HEIGHT)
         events.append(
-            "Dialogue: 0,0:00:00.00,9:59:59.00,Title,,0,0,0,,{{\\pos({},{})\\c&H00FFFFFF&}}{}".format(
-                title_one_x, title_one_y, _escape_ass_text(title_one)
+            "Dialogue: 0,0:00:00.00,9:59:59.00,Title,,0,0,0,,{{\\pos({},{})\\fs{}\\c&H00FFFFFF&}}{}".format(
+                title_one_x,
+                title_y,
+                scaled_font_size(title_size, width, height),
+                _escape_ass_text(title_one),
             )
         )
     if title_two:
@@ -466,11 +476,17 @@ def _burn_reference_layout(video_path: str | Path, title: str | None) -> str:
     title_band_height = round(TITLE_BACKGROUND_HEIGHT * height / REFERENCE_HEIGHT)
     subtitle_filter = (
         "drawbox=x=0:y={}:w=iw:h={}:color={}:t=fill,"
+        "drawbox=x=0:y={}:w=iw:h=1:color={}:t=fill,"
+        "drawbox=x=0:y={}:w=iw:h=1:color={}:t=fill,"
         "subtitles=filename={}:charenc=UTF-8"
     ).format(
         title_band_top,
         title_band_height,
         TITLE_BACKGROUND_COLOR,
+        title_band_top,
+        TITLE_BACKGROUND_BORDER_COLOR,
+        title_band_top + title_band_height - 1,
+        TITLE_BACKGROUND_BORDER_COLOR,
         _escape_filter_path(ass_file),
     )
     font_dir = subtitle_fonts_directory()
@@ -549,7 +565,15 @@ def _burn_srt_with_ffmpeg(video_path: str | Path, clip_srt: str, keywords: str |
     highlight_keywords = _parse_keywords(keywords)
     cue_count = _write_ass_subtitles(clip_srt, subtitle_file, highlight_keywords, width, height)
 
-    filter_parts = ["subtitles=filename={}".format(_escape_filter_path(subtitle_file)), "charenc=UTF-8"]
+    filter_parts = [
+        "eq=brightness={}:contrast={}:saturation={}".format(
+            VIDEO_BRIGHTNESS,
+            VIDEO_CONTRAST,
+            VIDEO_SATURATION,
+        ),
+        "subtitles=filename={}".format(_escape_filter_path(subtitle_file)),
+        "charenc=UTF-8",
+    ]
     font_dir = subtitle_fonts_directory()
     if font_dir:
         filter_parts.append("fontsdir={}".format(_escape_filter_path(font_dir)))

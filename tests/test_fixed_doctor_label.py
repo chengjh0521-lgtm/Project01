@@ -26,8 +26,8 @@ class FixedDoctorLabelTests(unittest.TestCase):
         command = run.call_args.args[0]
         filters = command[command.index("-filter_complex") + 1]
         self.assertEqual(Path(result).name, "clip_label.mp4")
-        self.assertIn("scale=iw*0.36:ih*0.36", filters)
-        self.assertIn("overlay=x=W*0.135185185-w/2:y=H*0.369791667-h/2", filters)
+        self.assertIn("scale=iw*0.24:ih*0.24", filters)
+        self.assertIn("overlay=x=W*0.135185185-w/2:y=H*0.416666667-h/2", filters)
         self.assertIn("format=auto:alpha=straight", filters)
         self.assertIn(str(label), command)
         self.assertEqual(command[command.index("-pix_fmt") + 1], "yuv420p")
