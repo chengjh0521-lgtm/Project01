@@ -7,7 +7,7 @@ from video_generation.doctor_label import apply_doctor_label
 
 
 class FixedDoctorLabelTests(unittest.TestCase):
-    def test_label_stays_at_visible_upper_left(self):
+    def test_label_uses_capcut_scale_and_position(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "clip.mp4"
@@ -26,8 +26,8 @@ class FixedDoctorLabelTests(unittest.TestCase):
         command = run.call_args.args[0]
         filters = command[command.index("-filter_complex") + 1]
         self.assertEqual(Path(result).name, "clip_label.mp4")
-        self.assertIn("scale=67:-1", filters)
-        self.assertIn("overlay=x=20:y=20", filters)
+        self.assertIn("scale=iw*0.36:ih*0.36", filters)
+        self.assertIn("overlay=x=W*0.113541667-w/2:y=H*0.150000000-h/2", filters)
         self.assertIn("format=auto:alpha=straight", filters)
         self.assertIn(str(label), command)
         self.assertEqual(command[command.index("-pix_fmt") + 1], "yuv420p")

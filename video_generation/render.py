@@ -29,7 +29,12 @@ _SRT_TIME_RE = re.compile(
 )
 _MAX_CAPTION_LINE_CHARACTERS = 15
 _CAPTION_FONT_SIZE = 15
-_CAPTION_BOTTOM_MARGIN = 700
+_CAPCUT_CANVAS_WIDTH = 1920
+_CAPCUT_CANVAS_HEIGHT = 1080
+_CAPCUT_SUBTITLE_X = 0
+_CAPCUT_SUBTITLE_Y = -518
+_CAPTION_BOTTOM_MARGIN = _CAPCUT_CANVAS_HEIGHT // 2 + _CAPCUT_SUBTITLE_Y
+_CAPTION_SHADOW_SIZE = 4
 _CAPTION_CONNECTORS = ("但是", "所以", "因为", "如果", "而且", "或者", "并且", "然后", "以及", "同时", "不过", "而是", "还是")
 _CAPTION_PUNCTUATION = "，。！？；：、,.!?;:"
 
@@ -362,13 +367,14 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Default,{font_family},{font_size},&H00FFFFFF,&H0000FFFF,&H00101010,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,48,48,{bottom_margin},1
+Style: Default,{font_family},{font_size},&H00FFFFFF,&H0000FFFF,&H00101010,&H80000000,0,0,0,0,100,100,0,0,1,2,{shadow_size},2,48,48,{bottom_margin},1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 """.format(
         font_family=unified_font_family(),
         font_size=_CAPTION_FONT_SIZE,
+        shadow_size=_CAPTION_SHADOW_SIZE,
         bottom_margin=_CAPTION_BOTTOM_MARGIN,
     )
     events = []

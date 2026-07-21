@@ -47,7 +47,7 @@ class CaptionWrappingTests(unittest.TestCase):
         self.assertIn("糖尿病患者，不能喝酒。", rendered)
         self.assertNotIn("嗯，", rendered)
         self.assertIn("Style: Default,STHeiti,15,", rendered)
-        self.assertIn(",1,2,1,2,48,48,700,1", rendered)
+        self.assertIn(",1,2,4,2,48,48,22,1", rendered)
 
 
 if __name__ == "__main__":
