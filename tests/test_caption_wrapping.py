@@ -2,12 +2,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from video_generation.render import _strip_caption_fillers, _write_ass_subtitles, _wrap_caption_two_lines
+from video_generation.render import _caption_font_size, _strip_caption_fillers, _write_ass_subtitles, _wrap_caption_two_lines
 
 
 class CaptionWrappingTests(unittest.TestCase):
     def test_keeps_short_captions_on_one_line(self):
         self.assertEqual(_wrap_caption_two_lines("糖尿病能喝酒吗？"), "糖尿病能喝酒吗？")
+
+    def test_caption_font_size_is_fixed_at_fifteen(self):
+        self.assertEqual(_caption_font_size("任意长度的字幕"), 15)
 
     def test_splits_captions_longer_than_fifteen_characters_at_punctuation(self):
         text = "糖尿病患者控制血糖很重要，但是不能因此过度焦虑。"
@@ -43,6 +46,8 @@ class CaptionWrappingTests(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertIn("糖尿病患者，不能喝酒。", rendered)
         self.assertNotIn("嗯，", rendered)
+        self.assertIn("Style: Default,STHeiti,15,", rendered)
+        self.assertIn(",1,2,1,2,48,48,700,1", rendered)
 
 
 if __name__ == "__main__":

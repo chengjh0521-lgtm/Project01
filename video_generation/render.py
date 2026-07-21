@@ -14,6 +14,7 @@ from funclip_loader import get_launch
 from subtitle_processing.sound_effect_binding import resolve_sound_effect_file
 from subtitle_processing.visual_asset_binding import get_visual_asset_definition, resolve_visual_asset_file
 from video_generation.doctor_label import apply_doctor_label
+from video_generation.font_config import subtitle_fonts_directory, unified_font_family
 from video_generation.question_intro import prepend_question_intro
 
 
@@ -27,6 +28,8 @@ _SRT_TIME_RE = re.compile(
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*$"
 )
 _MAX_CAPTION_LINE_CHARACTERS = 15
+_CAPTION_FONT_SIZE = 15
+_CAPTION_BOTTOM_MARGIN = 700
 _CAPTION_CONNECTORS = ("但是", "所以", "因为", "如果", "而且", "或者", "并且", "然后", "以及", "同时", "不过", "而是", "还是")
 _CAPTION_PUNCTUATION = "，。！？；：、,.!?;:"
 
@@ -283,14 +286,7 @@ def _mix_sound_effects(video_path: str | Path, clip_srt: str, sound_bindings: st
 
 
 def _caption_font_size(text: str) -> int:
-    longest_line = max((len(line) for line in text.split("\n")), default=0)
-    if longest_line > 30:
-        return 28
-    if longest_line > 24:
-        return 34
-    if longest_line > 20:
-        return 40
-    return 48
+    return _CAPTION_FONT_SIZE
 
 
 def _wrap_caption_two_lines(text: str) -> str:
@@ -366,11 +362,15 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Default,STHeiti,48,&H00FFFFFF,&H0000FFFF,&H00101010,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,48,48,64,1
+Style: Default,{font_family},{font_size},&H00FFFFFF,&H0000FFFF,&H00101010,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,48,48,{bottom_margin},1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
-"""
+""".format(
+        font_family=unified_font_family(),
+        font_size=_CAPTION_FONT_SIZE,
+        bottom_margin=_CAPTION_BOTTOM_MARGIN,
+    )
     events = []
     for start, end, text in cues:
         display_text = _strip_caption_fillers(text)
@@ -401,11 +401,9 @@ def _burn_srt_with_ffmpeg(video_path: str | Path, clip_srt: str, keywords: str |
     cue_count = _write_ass_subtitles(clip_srt, subtitle_file, highlight_keywords)
 
     filter_parts = ["subtitles=filename={}".format(_escape_filter_path(subtitle_file)), "charenc=UTF-8"]
-    launch_dir = os.environ.get("FUNCLIP_LAUNCH_DIR")
-    if launch_dir:
-        font_dir = Path(launch_dir).resolve().parent / "font"
-        if font_dir.is_dir():
-            filter_parts.append("fontsdir={}".format(_escape_filter_path(font_dir)))
+    font_dir = subtitle_fonts_directory()
+    if font_dir:
+        filter_parts.append("fontsdir={}".format(_escape_filter_path(font_dir)))
     subtitle_filter = ":".join(filter_parts)
     command = [
         ffmpeg,

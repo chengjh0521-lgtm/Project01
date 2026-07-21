@@ -10,6 +10,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from video_generation.font_config import subtitle_fonts_directory, unified_font_family
+
 
 DEFAULT_QUESTION_BACKGROUND = Path(__file__).with_name("question_intro_background.png")
 DEFAULT_TTS_VOICE = "zh-CN-YunxiNeural"
@@ -47,7 +49,7 @@ def _wrap_question_text(question: str) -> str:
 def _write_question_ass(question: str, ass_path: Path, width: int, height: int) -> None:
     base_font_size = max(44, min(80, round(min(width, height) * 0.07)))
     font_size = base_font_size * 2
-    top_margin = round(height * 0.50)
+    top_margin = round(height * 0.70)
     escaped = question.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
     header = """[Script Info]
 ScriptType: v4.00+
@@ -56,7 +58,7 @@ PlayResY: {height}
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Question,STHeiti,{font_size},{text_color},&H00000000,&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,2,1,8,80,80,{top_margin},1
+Style: Question,{font_family},{font_size},{text_color},&H00000000,&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,2,1,8,80,80,{top_margin},1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
@@ -64,6 +66,7 @@ Dialogue: 0,0:00:00.00,0:00:03.00,Question,,0,0,0,,{text}
 """.format(
         width=width,
         height=height,
+        font_family=unified_font_family(),
         font_size=font_size,
         text_color=QUESTION_TEXT_ASS_COLOR,
         top_margin=top_margin,
@@ -176,11 +179,9 @@ def create_question_intro(
         "pad={}:{}:(ow-iw)/2:(oh-ih):color=black,format=yuv420p"
     ).format(width, height, width, height)
     subtitle_filter = "subtitles=filename={}:charenc=UTF-8".format(_escape_filter_path(subtitle_path))
-    launch_dir = os.environ.get("FUNCLIP_LAUNCH_DIR")
-    if launch_dir:
-        font_dir = Path(launch_dir).resolve().parent / "font"
-        if font_dir.is_dir():
-            subtitle_filter += ":fontsdir={}".format(_escape_filter_path(font_dir))
+    font_dir = subtitle_fonts_directory()
+    if font_dir:
+        subtitle_filter += ":fontsdir={}".format(_escape_filter_path(font_dir))
     command = [
         ffmpeg, "-y", "-loop", "1", "-framerate", "30", "-i", str(background), "-i", str(audio_path),
         "-filter:v", "{},{}".format(visual_filter, subtitle_filter), "-map", "0:v:0", "-map", "1:a:0",

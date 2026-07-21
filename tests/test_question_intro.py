@@ -29,7 +29,7 @@ class QuestionIntroTests(unittest.TestCase):
 
         self.assertIn("Style: Question,STHeiti,152,", ass)
         self.assertIn(",{},".format(QUESTION_TEXT_ASS_COLOR), ass)
-        self.assertIn(",1,2,1,8,80,80,960,1", ass)
+        self.assertIn(",1,2,1,8,80,80,1344,1", ass)
 
     def test_creates_a_short_static_video_with_the_question_audio(self):
         with tempfile.TemporaryDirectory() as temporary:
