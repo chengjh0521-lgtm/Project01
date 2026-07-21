@@ -467,7 +467,7 @@ def submit_render(llm_result, video_state, keywords, sound_bindings, library_vid
             [video] if video else [],
         )
         return {
-            "video": video,
+            "video": [video] if video else [],
             "sound_logic": logic_files,
             "report": report_file,
             "render_message": "{}；输出={}".format(render_message, video),

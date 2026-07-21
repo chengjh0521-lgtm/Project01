@@ -184,7 +184,7 @@ def create_question_intro(
     command = [
         ffmpeg, "-y", "-loop", "1", "-framerate", "30", "-i", str(background), "-i", str(audio_path),
         "-filter:v", "{},{}".format(visual_filter, subtitle_filter), "-map", "0:v:0", "-map", "1:a:0",
-        "-t", "{:.3f}".format(duration), "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-t", "{:.3f}".format(duration), "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(destination),
     ]
     logging.warning(
@@ -227,7 +227,7 @@ def prepend_question_intro(video_path: str | Path, question: str) -> str:
     ])
     command = [
         ffmpeg, "-y", "-i", str(intro), "-i", str(source), "-filter_complex", filter_graph,
-        "-map", "[outv]", "-map", "[outa]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-map", "[outv]", "-map", "[outa]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
     ]
     logging.warning("Prepending question intro: source=%s, question=%s, output=%s", source, question, output)

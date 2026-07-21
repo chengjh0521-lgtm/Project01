@@ -58,6 +58,7 @@ class QuestionIntroTests(unittest.TestCase):
         self.assertIn("subtitles=filename=", command[command.index("-filter:v") + 1])
         self.assertIn("-t", command)
         self.assertLessEqual(float(command[command.index("-t") + 1]), MAX_QUESTION_INTRO_SECONDS)
+        self.assertEqual(command[command.index("-pix_fmt") + 1], "yuv420p")
 
     def test_rejects_audio_that_cannot_fit_the_three_second_limit(self):
         with tempfile.TemporaryDirectory() as temporary:

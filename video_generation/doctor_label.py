@@ -34,8 +34,8 @@ def apply_doctor_label(video_path: str | Path, label_path: str | Path | None = N
         ffmpeg, "-y", "-i", str(source), "-loop", "1", "-framerate", "30", "-i", str(label),
         "-filter_complex", filter_graph,
         "-map", "[outv]", "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-        "-c:a", "copy", "-shortest", "-movflags", "+faststart", str(output),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(output),
     ]
     logging.warning(
         "Doctor-label module started: source=%s, label=%s, output=%s, filter=%s",

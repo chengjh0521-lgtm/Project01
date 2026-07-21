@@ -238,7 +238,7 @@ def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_binding
         return str(video_path), 0
     command.extend([
         "-filter_complex", ";".join(filters), "-map", "[{}]".format(previous), "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "copy",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "copy",
         "-movflags", "+faststart", str(output),
     ])
     completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
@@ -420,6 +420,8 @@ def _burn_srt_with_ffmpeg(video_path: str | Path, clip_srt: str, keywords: str |
         "veryfast",
         "-crf",
         "20",
+        "-pix_fmt",
+        "yuv420p",
         "-c:a",
         "aac",
         "-b:a",

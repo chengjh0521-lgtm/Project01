@@ -30,6 +30,8 @@ class FixedDoctorLabelTests(unittest.TestCase):
         self.assertIn("overlay=x=20:y=20", filters)
         self.assertIn("format=auto:alpha=straight", filters)
         self.assertIn(str(label), command)
+        self.assertEqual(command[command.index("-pix_fmt") + 1], "yuv420p")
+        self.assertEqual(command[command.index("-c:a") + 1], "aac")
 
     def test_label_failure_is_not_silently_returned_as_a_success(self):
         with tempfile.TemporaryDirectory() as temporary:
