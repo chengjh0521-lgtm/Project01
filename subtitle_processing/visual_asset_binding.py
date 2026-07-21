@@ -363,7 +363,7 @@ def _clean_visual_results(raw: str, sentences: list[dict], assets: list[dict]) -
             "sentence_id": sentence_id,
             "asset_id": asset_id,
             "target_word": target_word,
-            "position": "upper_right",
+            "position": "caption_lower_left",
             "duration_seconds": _selected_display_duration_seconds(definition, result.get("duration_seconds")),
             "reason": str(result.get("reason", ""))[:160],
         })

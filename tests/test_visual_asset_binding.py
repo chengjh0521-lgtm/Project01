@@ -6,10 +6,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from subtitle_processing.visual_asset_binding import _available_assets, build_visual_sentences, select_visual_assets
-from video_generation.render import describe_visual_asset_events
+from video_generation.render import _visual_position, describe_visual_asset_events
 
 
 class VisualAssetBindingTests(unittest.TestCase):
+    def test_visual_assets_use_the_caption_lower_left_anchor(self):
+        self.assertEqual(_visual_position("caption_lower_left"), ("W*0.22", "H*0.70"))
+        self.assertEqual(_visual_position("upper_right"), ("W-w-36", "72"))
+
     def test_updated_array_index_decodes_file_name_and_green_screen_gif(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

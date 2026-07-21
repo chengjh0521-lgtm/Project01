@@ -17,7 +17,7 @@ class CaptionWrappingTests(unittest.TestCase):
         self.assertEqual(_wrap_caption_two_lines("糖尿病能喝酒吗？"), "糖尿病能喝酒吗？")
 
     def test_caption_font_size_matches_the_reference_layout(self):
-        self.assertEqual(_caption_font_size("任意长度的字幕"), 70)
+        self.assertEqual(_caption_font_size("任意长度的字幕"), 86)
 
     def test_splits_captions_longer_than_fifteen_characters_at_punctuation(self):
         text = "糖尿病患者控制血糖很重要，但是不能因此过度焦虑。"
@@ -53,7 +53,7 @@ class CaptionWrappingTests(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertIn("糖尿病患者，不能喝酒。", rendered)
         self.assertNotIn("嗯，", rendered)
-        self.assertIn("Style: Default,STHeiti,70,", rendered)
+        self.assertIn("Style: Default,STHeiti,86,", rendered)
         self.assertIn(",1,2,4,5,48,48,0,1", rendered)
         self.assertIn(r"\pos(540,1250)", rendered)
 
@@ -64,7 +64,7 @@ class CaptionWrappingTests(unittest.TestCase):
             rendered = ass_path.read_text(encoding="utf-8")
 
         self.assertEqual(_title_lines("合理饮食才能更好控制血糖"), ("合理饮食才能", "更好控制血糖"))
-        self.assertIn(r"\pos(540,222)\fs88\c&H00FFFFFF&", rendered)
+        self.assertIn(r"\pos(540,222)\fs110\c&H00FFFFFF&", rendered)
         self.assertIn(r"\pos(540,322)\c&H006AF2FF&", rendered)
         self.assertIn(r"\pos(540,1825)", rendered)
         self.assertIn("科学科普 仅供参考\\N身体如有不适请线下就医", rendered)

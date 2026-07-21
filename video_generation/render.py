@@ -213,7 +213,10 @@ def _visual_asset_events(clip_srt: str, visual_bindings: str | None) -> list[dic
                 "asset_file": asset_file.name,
                 "media_type": definition.get("media_type", "image"),
                 "requires_chroma_key": bool(technical.get("requires_chroma_key")),
-                "position": placement.get("position", "upper_right"),
+                # Visual assets are intentionally kept below and left of the
+                # current caption. Ignore legacy saved placement values so a
+                # prior LLM response cannot send assets back to the top edge.
+                "position": "caption_lower_left",
                 "target_word": target_word,
                 "subtitle": subtitle_text,
                 "reason": str(placement.get("reason", "")),
@@ -234,8 +237,11 @@ def _visual_position(position: str) -> tuple[str, str]:
         "top_center": ("(W-w)/2", "72"),
         "middle_left": ("36", "H*0.40-h/2"),
         "middle_right": ("W-w-36", "H*0.40-h/2"),
+        # Caption centre is y=1250 on the 1920px reference canvas. Start the
+        # asset below it and keep clear of the left doctor-label strip.
+        "caption_lower_left": ("W*0.22", "H*0.70"),
     }
-    return positions.get(position, positions["upper_right"])
+    return positions.get(position, positions["caption_lower_left"])
 
 
 def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_bindings: str | None) -> tuple[str, int]:
