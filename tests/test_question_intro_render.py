@@ -13,7 +13,8 @@ class QuestionIntroRenderTests(unittest.TestCase):
             "video_generation.render._burn_srt_with_ffmpeg", return_value="captioned.mp4"
         ), patch("video_generation.render._overlay_visual_assets", return_value=("visual.mp4", 1)), patch(
             "video_generation.render._mix_sound_effects", return_value=("mixed.mp4", 2)
-        ), patch("video_generation.render.prepend_question_intro", return_value="with_intro.mp4") as prepend, patch(
+        ), patch("video_generation.render._burn_reference_layout", return_value="layout.mp4") as layout, patch(
+            "video_generation.render.prepend_question_intro", return_value="with_intro.mp4") as prepend, patch(
             "video_generation.render.apply_doctor_label", return_value="final.mp4"
         ) as label:
             video, _, message, _ = render_highlight_video(
@@ -22,7 +23,8 @@ class QuestionIntroRenderTests(unittest.TestCase):
 
         self.assertEqual(video, "final.mp4")
         self.assertIn("question intro=True", message)
-        prepend.assert_called_once_with("mixed.mp4", "糖尿病能喝酒吗？")
+        layout.assert_called_once_with("mixed.mp4", "糖尿病能喝酒吗？")
+        prepend.assert_called_once_with("layout.mp4", "糖尿病能喝酒吗？")
         label.assert_called_once_with("with_intro.mp4")
 
 

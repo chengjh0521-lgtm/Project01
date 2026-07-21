@@ -2,15 +2,22 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from video_generation.render import _caption_font_size, _strip_caption_fillers, _write_ass_subtitles, _wrap_caption_two_lines
+from video_generation.render import (
+    _caption_font_size,
+    _strip_caption_fillers,
+    _title_lines,
+    _write_ass_subtitles,
+    _write_reference_layout_ass,
+    _wrap_caption_two_lines,
+)
 
 
 class CaptionWrappingTests(unittest.TestCase):
     def test_keeps_short_captions_on_one_line(self):
         self.assertEqual(_wrap_caption_two_lines("糖尿病能喝酒吗？"), "糖尿病能喝酒吗？")
 
-    def test_caption_font_size_is_fixed_at_fifteen(self):
-        self.assertEqual(_caption_font_size("任意长度的字幕"), 15)
+    def test_caption_font_size_matches_the_reference_layout(self):
+        self.assertEqual(_caption_font_size("任意长度的字幕"), 70)
 
     def test_splits_captions_longer_than_fifteen_characters_at_punctuation(self):
         text = "糖尿病患者控制血糖很重要，但是不能因此过度焦虑。"
@@ -46,8 +53,21 @@ class CaptionWrappingTests(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertIn("糖尿病患者，不能喝酒。", rendered)
         self.assertNotIn("嗯，", rendered)
-        self.assertIn("Style: Default,STHeiti,15,", rendered)
-        self.assertIn(",1,2,4,2,48,48,22,1", rendered)
+        self.assertIn("Style: Default,STHeiti,70,", rendered)
+        self.assertIn(",1,2,4,5,48,48,0,1", rendered)
+        self.assertIn(r"\pos(540,1220)", rendered)
+
+    def test_reference_layout_adds_two_colour_title_and_disclaimer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ass_path = Path(temporary) / "reference.ass"
+            _write_reference_layout_ass("合理饮食才能更好控制血糖", ass_path, 1080, 1920)
+            rendered = ass_path.read_text(encoding="utf-8")
+
+        self.assertEqual(_title_lines("合理饮食才能更好控制血糖"), ("合理饮食才能", "更好控制血糖"))
+        self.assertIn(r"\pos(540,230)\c&H00FFFFFF&", rendered)
+        self.assertIn(r"\pos(540,335)\c&H006AF2FF&", rendered)
+        self.assertIn(r"\pos(540,1825)", rendered)
+        self.assertIn("科学科普 仅供参考\\N身体如有不适请线下就医", rendered)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,19 @@ from subtitle_processing.visual_asset_binding import get_visual_asset_definition
 from video_generation.doctor_label import apply_doctor_label
 from video_generation.font_config import subtitle_fonts_directory, unified_font_family
 from video_generation.question_intro import prepend_question_intro
+from video_generation.reference_layout import (
+    CAPTION_CENTER,
+    CAPTION_FONT_SIZE,
+    DISCLAIMER_CENTER,
+    DISCLAIMER_FONT_SIZE,
+    TITLE_FONT_SIZE,
+    TITLE_LINE_ONE,
+    TITLE_LINE_TWO,
+    REFERENCE_HEIGHT,
+    REFERENCE_WIDTH,
+    scaled_font_size,
+    scaled_position,
+)
 
 
 def _escape_filter_path(path: Path) -> str:
@@ -28,12 +41,6 @@ _SRT_TIME_RE = re.compile(
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*$"
 )
 _MAX_CAPTION_LINE_CHARACTERS = 15
-_CAPTION_FONT_SIZE = 15
-_CAPCUT_CANVAS_WIDTH = 1920
-_CAPCUT_CANVAS_HEIGHT = 1080
-_CAPCUT_SUBTITLE_X = 0
-_CAPCUT_SUBTITLE_Y = -518
-_CAPTION_BOTTOM_MARGIN = _CAPCUT_CANVAS_HEIGHT // 2 + _CAPCUT_SUBTITLE_Y
 _CAPTION_SHADOW_SIZE = 4
 _CAPTION_CONNECTORS = ("但是", "所以", "因为", "如果", "而且", "或者", "并且", "然后", "以及", "同时", "不过", "而是", "还是")
 _CAPTION_PUNCTUATION = "，。！？；：、,.!?;:"
@@ -76,6 +83,28 @@ def _time_to_ms(value: str) -> int:
     hours, minutes, seconds = value.strip().replace(".", ",").split(":")
     second, millis = seconds.split(",")
     return (int(hours) * 3_600_000 + int(minutes) * 60_000 + int(second) * 1_000 + int(millis.ljust(3, "0")[:3]))
+
+
+def _video_dimensions(video_path: Path) -> tuple[int, int]:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise RuntimeError("服务器未安装 ffprobe，无法按参考布局烧录字幕。")
+    completed = subprocess.run(
+        [
+            ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+            "-of", "csv=p=0:s=x", str(video_path),
+        ],
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    if completed.returncode:
+        raise RuntimeError("无法读取视频尺寸：{}".format(completed.stderr[-500:]))
+    try:
+        width, height = (int(value) for value in completed.stdout.strip().split("x", 1))
+    except ValueError as exc:
+        raise RuntimeError("视频没有可用的画面尺寸。") from exc
+    return width, height
 
 
 def _parse_sound_bindings(value: str | None) -> list[dict[str, str]]:
@@ -291,7 +320,7 @@ def _mix_sound_effects(video_path: str | Path, clip_srt: str, sound_bindings: st
 
 
 def _caption_font_size(text: str) -> int:
-    return _CAPTION_FONT_SIZE
+    return CAPTION_FONT_SIZE
 
 
 def _wrap_caption_two_lines(text: str) -> str:
@@ -355,38 +384,138 @@ def _highlight_ass_text(text: str, keywords: list[str]) -> str:
     return pattern.sub(lambda match: r"{\c&H0000FFFF&}" + match.group(0) + r"{\c&H00FFFFFF&}", escaped)
 
 
-def _write_ass_subtitles(clip_srt: str, ass_file: Path, keywords: list[str]) -> int:
+def _escape_ass_text(text: str) -> str:
+    return str(text or "").replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
+
+
+def _title_lines(title: str) -> tuple[str, str]:
+    compact = "".join(str(title or "").split())
+    if len(compact) <= 8:
+        return compact, ""
+    midpoint = len(compact) // 2
+    split_at = midpoint
+    for punctuation in "，、；：,;:":
+        position = compact.rfind(punctuation, 0, midpoint + 1)
+        if position >= 3:
+            split_at = position + 1
+            break
+    return compact[:split_at], compact[split_at:]
+
+
+def _write_reference_layout_ass(title: str, ass_file: Path, width: int, height: int) -> None:
+    """Write the top title and medical disclaimer using the approved reference layout."""
+    title_one, title_two = _title_lines(title)
+    title_one_x, title_one_y = scaled_position(TITLE_LINE_ONE, width, height)
+    title_two_x, title_two_y = scaled_position(TITLE_LINE_TWO, width, height)
+    disclaimer_x, disclaimer_y = scaled_position(DISCLAIMER_CENTER, width, height)
+    header = """[Script Info]
+ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Title,{font_family},{title_size},&H00FFFFFF,&H00000000,&H00101010,&H90000000,1,0,0,0,100,100,0,0,1,3,5,5,48,48,0,1
+Style: Disclaimer,{font_family},{disclaimer_size},&H00FFFFFF,&H00000000,&H00101010,&H90000000,0,0,0,0,100,100,0,0,1,2,2,5,48,48,0,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+""".format(
+        width=width,
+        height=height,
+        font_family=unified_font_family(),
+        title_size=scaled_font_size(TITLE_FONT_SIZE, width, height),
+        disclaimer_size=scaled_font_size(DISCLAIMER_FONT_SIZE, width, height),
+    )
+    events = []
+    if title_one:
+        events.append(
+            "Dialogue: 0,0:00:00.00,9:59:59.00,Title,,0,0,0,,{{\\pos({},{})\\c&H00FFFFFF&}}{}".format(
+                title_one_x, title_one_y, _escape_ass_text(title_one)
+            )
+        )
+    if title_two:
+        events.append(
+            "Dialogue: 0,0:00:00.00,9:59:59.00,Title,,0,0,0,,{{\\pos({},{})\\c&H006AF2FF&}}{}".format(
+                title_two_x, title_two_y, _escape_ass_text(title_two)
+            )
+        )
+    disclaimer = "科学科普 仅供参考\\N身体如有不适请线下就医"
+    events.append(
+        "Dialogue: 0,0:00:00.00,9:59:59.00,Disclaimer,,0,0,0,,{{\\pos({},{})}}{}".format(
+            disclaimer_x, disclaimer_y, disclaimer
+        )
+    )
+    ass_file.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+
+
+def _burn_reference_layout(video_path: str | Path, title: str | None) -> str:
+    source = Path(video_path).resolve()
+    width, height = _video_dimensions(source)
+    ass_file = source.with_name("{}_reference_layout.ass".format(source.stem))
+    output = source.with_name("{}_reference_layout{}".format(source.stem, source.suffix))
+    _write_reference_layout_ass(str(title or ""), ass_file, width, height)
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("服务器未安装 ffmpeg，无法烧录参考版标题布局。")
+    subtitle_filter = "subtitles=filename={}:charenc=UTF-8".format(_escape_filter_path(ass_file))
+    font_dir = subtitle_fonts_directory()
+    if font_dir:
+        subtitle_filter += ":fontsdir={}".format(_escape_filter_path(font_dir))
+    command = [
+        ffmpeg, "-y", "-i", str(source), "-vf", subtitle_filter,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "copy", "-movflags", "+faststart", str(output),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
+    if completed.returncode:
+        raise RuntimeError("参考版标题布局烧录失败：{}".format(completed.stderr[-1000:]))
+    return str(output)
+
+
+def _write_ass_subtitles(
+        clip_srt: str,
+        ass_file: Path,
+        keywords: list[str],
+        width: int = REFERENCE_WIDTH,
+        height: int = REFERENCE_HEIGHT,
+) -> int:
     cues = _parse_srt_cues(clip_srt)
     if not cues:
         raise RuntimeError("高光剪辑没有生成可烧录的字幕 SRT。")
     header = """[Script Info]
 ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: 1080
+PlayResX: {width}
+PlayResY: {height}
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Default,{font_family},{font_size},&H00FFFFFF,&H0000FFFF,&H00101010,&H80000000,0,0,0,0,100,100,0,0,1,2,{shadow_size},2,48,48,{bottom_margin},1
+Style: Default,{font_family},{font_size},&H00FFFFFF,&H0000FFFF,&H00101010,&H80000000,0,0,0,0,100,100,0,0,1,2,{shadow_size},5,48,48,0,1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 """.format(
+        width=width,
+        height=height,
         font_family=unified_font_family(),
-        font_size=_CAPTION_FONT_SIZE,
+        font_size=scaled_font_size(CAPTION_FONT_SIZE, width, height),
         shadow_size=_CAPTION_SHADOW_SIZE,
-        bottom_margin=_CAPTION_BOTTOM_MARGIN,
     )
+    caption_x, caption_y = scaled_position(CAPTION_CENTER, width, height)
     events = []
     for start, end, text in cues:
         display_text = _strip_caption_fillers(text)
         if not display_text:
             continue
         wrapped_text = _wrap_caption_two_lines(display_text)
-        events.append("Dialogue: 0,{},{},Default,,0,0,0,,{{\\fs{}}}{}".format(
+        events.append("Dialogue: 0,{},{},Default,,0,0,0,,{{\\pos({},{})\\fs{}}}{}".format(
             _ass_timecode(start),
             _ass_timecode(end),
-            _caption_font_size(wrapped_text),
+            caption_x,
+            caption_y,
+            scaled_font_size(_caption_font_size(wrapped_text), width, height),
             _highlight_ass_text(wrapped_text, keywords),
         ))
     ass_file.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
@@ -401,10 +530,11 @@ def _burn_srt_with_ffmpeg(video_path: str | Path, clip_srt: str, keywords: str |
         raise RuntimeError("服务器未安装 ffmpeg，无法烧录字幕。")
 
     source = Path(video_path).resolve()
+    width, height = _video_dimensions(source)
     subtitle_file = source.with_name("{}_captions.ass".format(source.stem))
     output = source.with_name("{}_captioned{}".format(source.stem, source.suffix))
     highlight_keywords = _parse_keywords(keywords)
-    cue_count = _write_ass_subtitles(clip_srt, subtitle_file, highlight_keywords)
+    cue_count = _write_ass_subtitles(clip_srt, subtitle_file, highlight_keywords, width, height)
 
     filter_parts = ["subtitles=filename={}".format(_escape_filter_path(subtitle_file)), "charenc=UTF-8"]
     font_dir = subtitle_fonts_directory()
@@ -473,9 +603,10 @@ def render_highlight_video(
         captioned_video = _burn_srt_with_ffmpeg(video, clip_srt, keywords)
         visual_video, visual_count = _overlay_visual_assets(captioned_video, clip_srt, visual_bindings)
         mixed_video, sound_count = _mix_sound_effects(visual_video, clip_srt, sound_bindings)
-        intro_video = prepend_question_intro(mixed_video, question) if str(question or "").strip() else mixed_video
+        layout_video = _burn_reference_layout(mixed_video, question)
+        intro_video = prepend_question_intro(layout_video, question) if str(question or "").strip() else layout_video
         final_video = apply_doctor_label(intro_video)
-        return final_video, audio, "{}; burned subtitles via FFmpeg; question intro={}; {} GIF/PNG assets overlaid; fixed doctor label=True; {} sound effects mixed".format(
+        return final_video, audio, "{}; burned subtitles via FFmpeg; reference layout=True; question intro={}; {} GIF/PNG assets overlaid; fixed doctor label=True; {} sound effects mixed".format(
             message, bool(str(question or "").strip()), visual_count, sound_count
         ), clip_srt
     return launch.AI_clip(
