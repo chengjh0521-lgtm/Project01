@@ -18,10 +18,10 @@ DEFAULT_TTS_VOICE = "zh-CN-YunxiNeural"
 DEFAULT_TTS_RATE = "+35%"
 FAST_TTS_RATE = "+60%"
 MAX_QUESTION_INTRO_SECONDS = 3.0
-# The intro question uses a deliberately large font. Five Chinese characters
-# leave room for outline and shadow, while six can cause ASS to push a trailing
-# question mark onto a line by itself on narrow portrait videos.
-MAX_QUESTION_LINE_CHARACTERS = 5
+# The intro question uses a deliberately large font. Seven Chinese characters
+# fit the approved layout; trailing punctuation is handled separately so it
+# cannot become an orphaned line on narrow portrait videos.
+MAX_QUESTION_LINE_CHARACTERS = 7
 _QUESTION_TRAILING_PUNCTUATION = "？?！!。"
 QUESTION_TEXT_ASS_COLOR = "&H0000FFFF"
 

@@ -14,12 +14,12 @@ from video_generation.question_intro import (
 
 
 class QuestionIntroTests(unittest.TestCase):
-    def test_question_text_wraps_to_at_most_six_characters_per_line(self):
+    def test_question_text_wraps_to_at_most_seven_characters_per_line(self):
         wrapped = _wrap_question_text("糖尿病患者能不能喝酒呢？")
 
         lines = wrapped.split("\\N")
         self.assertEqual("".join(lines), "糖尿病患者能不能喝酒呢？")
-        self.assertTrue(all(len(line) <= 6 for line in lines))
+        self.assertTrue(all(len(line) <= 7 for line in lines))
 
     def test_question_mark_is_never_orphaned_on_its_own_line(self):
         wrapped = _wrap_question_text("糖前期应该吃粗粮吗？")
