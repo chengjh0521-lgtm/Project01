@@ -21,6 +21,9 @@ from video_generation.reference_layout import (
     CAPTION_FONT_SIZE,
     DISCLAIMER_CENTER,
     DISCLAIMER_FONT_SIZE,
+    TITLE_BACKGROUND_COLOR,
+    TITLE_BACKGROUND_HEIGHT,
+    TITLE_BACKGROUND_TOP,
     TITLE_FONT_SIZE,
     TITLE_LINE_ONE,
     TITLE_LINE_TWO,
@@ -459,7 +462,17 @@ def _burn_reference_layout(video_path: str | Path, title: str | None) -> str:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("服务器未安装 ffmpeg，无法烧录参考版标题布局。")
-    subtitle_filter = "subtitles=filename={}:charenc=UTF-8".format(_escape_filter_path(ass_file))
+    title_band_top = round(TITLE_BACKGROUND_TOP * height / REFERENCE_HEIGHT)
+    title_band_height = round(TITLE_BACKGROUND_HEIGHT * height / REFERENCE_HEIGHT)
+    subtitle_filter = (
+        "drawbox=x=0:y={}:w=iw:h={}:color={}:t=fill,"
+        "subtitles=filename={}:charenc=UTF-8"
+    ).format(
+        title_band_top,
+        title_band_height,
+        TITLE_BACKGROUND_COLOR,
+        _escape_filter_path(ass_file),
+    )
     font_dir = subtitle_fonts_directory()
     if font_dir:
         subtitle_filter += ":fontsdir={}".format(_escape_filter_path(font_dir))

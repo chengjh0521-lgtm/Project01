@@ -6,11 +6,18 @@ from __future__ import annotations
 REFERENCE_WIDTH = 1080
 REFERENCE_HEIGHT = 1920
 
-TITLE_LINE_ONE = (540, 230)
-TITLE_LINE_TWO = (540, 335)
-CAPTION_CENTER = (540, 1220)
+# The approved reference uses a translucent title band occupying the upper
+# portion of the portrait canvas. Keep these values in the 1080x1920 design
+# space and scale them only at render time.
+TITLE_BACKGROUND_TOP = 160
+TITLE_BACKGROUND_HEIGHT = 248
+TITLE_BACKGROUND_COLOR = "white@0.56"
+
+TITLE_LINE_ONE = (540, 222)
+TITLE_LINE_TWO = (540, 322)
+CAPTION_CENTER = (540, 1270)
 DISCLAIMER_CENTER = (540, 1825)
-DOCTOR_LABEL_CENTER = (166, 765)
+DOCTOR_LABEL_CENTER = (146, 710)
 
 TITLE_FONT_SIZE = 88
 CAPTION_FONT_SIZE = 70

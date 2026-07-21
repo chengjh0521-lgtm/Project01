@@ -55,7 +55,7 @@ class CaptionWrappingTests(unittest.TestCase):
         self.assertNotIn("嗯，", rendered)
         self.assertIn("Style: Default,STHeiti,70,", rendered)
         self.assertIn(",1,2,4,5,48,48,0,1", rendered)
-        self.assertIn(r"\pos(540,1220)", rendered)
+        self.assertIn(r"\pos(540,1270)", rendered)
 
     def test_reference_layout_adds_two_colour_title_and_disclaimer(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -64,8 +64,8 @@ class CaptionWrappingTests(unittest.TestCase):
             rendered = ass_path.read_text(encoding="utf-8")
 
         self.assertEqual(_title_lines("合理饮食才能更好控制血糖"), ("合理饮食才能", "更好控制血糖"))
-        self.assertIn(r"\pos(540,230)\c&H00FFFFFF&", rendered)
-        self.assertIn(r"\pos(540,335)\c&H006AF2FF&", rendered)
+        self.assertIn(r"\pos(540,222)\c&H00FFFFFF&", rendered)
+        self.assertIn(r"\pos(540,322)\c&H006AF2FF&", rendered)
         self.assertIn(r"\pos(540,1825)", rendered)
         self.assertIn("科学科普 仅供参考\\N身体如有不适请线下就医", rendered)
 
