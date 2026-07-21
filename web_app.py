@@ -84,6 +84,7 @@ VIDEO_LIBRARY_DIR = Path(__file__).resolve().parent / "subtitle_generation" / "p
 SOUND_LOGIC_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "sound_effect_logic"
 RENDER_REPORT_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "generation_reports"
 SAVED_CORRECTED_SUBTITLE_DIR = Path(__file__).resolve().parent / "subtitle_processing" / "saved_corrected_subtitles"
+SAVED_HIGHLIGHT_DIR = Path(__file__).resolve().parent / "subtitle_processing" / "saved_highlights"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 VIDEO_SOURCE_CONTEXT_FILE = Path(__file__).resolve().parent / "subtitle_generation" / ".latest_video_source.json"
 _VIDEO_STATE_LOCK = threading.RLock()
@@ -275,6 +276,65 @@ def save_corrected_subtitle(srt_text):
     return str(path)
 
 
+def list_saved_highlights():
+    """List complete server-side highlight plans that can be rendered again."""
+    SAVED_HIGHLIGHT_DIR.mkdir(parents=True, exist_ok=True)
+    return sorted((path.name for path in SAVED_HIGHLIGHT_DIR.glob("*.json")), reverse=True)
+
+
+def refresh_saved_highlights():
+    choices = list_saved_highlights()
+    return gr.Dropdown(choices=choices, value=choices[0] if choices else None)
+
+
+def _saved_highlight_path(file_name):
+    if not file_name:
+        raise ValueError("请先选择一份服务器历史高光。")
+    root = SAVED_HIGHLIGHT_DIR.resolve()
+    path = (root / str(file_name)).resolve()
+    if root not in path.parents or not path.is_file() or path.suffix.lower() != ".json":
+        raise ValueError("所选历史高光不存在或不在保存目录内。")
+    return path
+
+
+def save_highlight_plan(plan, source_video=None):
+    """Persist all downstream decisions so rendering can skip every LLM stage."""
+    if not isinstance(plan, dict) or not isinstance(plan.get("clips"), list) or not plan["clips"]:
+        raise ValueError("高光计划为空，无法保存。")
+    corrected_srt = _corrected_srt_from_plan(plan)
+    if not corrected_srt.strip():
+        raise ValueError("高光计划缺少洗稿字幕，无法重建视频状态。")
+    source = str(source_video or _resolve_video_source() or "").strip()
+    payload = {
+        "version": 1,
+        "saved_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "source_video": source,
+        "plan": plan,
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:10]
+    SAVED_HIGHLIGHT_DIR.mkdir(parents=True, exist_ok=True)
+    filename = "highlight_{}_{}.json".format(datetime.now().strftime("%Y%m%d_%H%M%S"), digest)
+    path = SAVED_HIGHLIGHT_DIR / filename
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    logging.warning("Saved reusable highlight plan: %s", path)
+    return str(path)
+
+
+def _load_saved_highlight(file_name):
+    path = _saved_highlight_path(file_name)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("历史高光文件无法读取：{}".format(exc)) from exc
+    plan = payload.get("plan") if isinstance(payload, dict) else None
+    if not isinstance(plan, dict) or not isinstance(plan.get("clips"), list) or not plan["clips"]:
+        raise ValueError("历史高光文件缺少可渲染的高光计划。")
+    if not _corrected_srt_from_plan(plan).strip():
+        raise ValueError("历史高光文件缺少洗稿字幕，无法重建视频状态。")
+    return payload, plan
+
+
 def write_sound_effect_logic(video_path, clip_srt, sound_bindings, clip_id, ranges=None, visual_bindings=None):
     """Persist the exact sound and visual placements used by the renderer."""
     SOUND_LOGIC_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -345,6 +405,7 @@ def submit_process(srt_text, api_key, keyword_count, clip_count, video_state):
 
     def worker(report):
         corrected_file = None
+        highlight_file = None
 
         def save_after_correction(corrected_srt):
             nonlocal corrected_file
@@ -361,7 +422,16 @@ def submit_process(srt_text, api_key, keyword_count, clip_count, video_state):
             on_corrected=save_after_correction,
         )
         _remember_video_state(result[-1], "subtitle processing")
-        return {"pipeline": result, "corrected_file": corrected_file or save_corrected_subtitle(result[0])}
+        try:
+            highlight_file = save_highlight_plan(result[2], _resolve_video_source())
+            report("阶段 5/5：高光计划已保存，可直接用于后续视频生成。")
+        except (OSError, ValueError, TypeError) as exc:
+            logging.warning("保存历史高光失败：%s", exc)
+        return {
+            "pipeline": result,
+            "corrected_file": corrected_file or save_corrected_subtitle(result[0]),
+            "highlight_file": highlight_file,
+        }
 
     job_id = JOBS.submit("process", worker)
     return ("字幕处理已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(11), job_id, {"id": job_id}, *_progress_updates("process", 0))
@@ -383,10 +453,36 @@ def submit_process_from_saved(saved_file, api_key, keyword_count, clip_count, vi
             status_callback=report,
         )
         _remember_video_state(result[-1], "saved subtitle processing")
-        return {"pipeline": result, "corrected_file": str(path)}
+        try:
+            highlight_file = save_highlight_plan(result[2], _resolve_video_source())
+            report("阶段 5/5：高光计划已保存，可直接用于后续视频生成。")
+        except (OSError, ValueError, TypeError) as exc:
+            logging.warning("保存历史高光失败：%s", exc)
+            highlight_file = None
+        return {"pipeline": result, "corrected_file": str(path), "highlight_file": highlight_file}
 
     job_id = JOBS.submit("process", worker)
     return ("已保存字幕2处理任务已进入后台队列：{}".format(job_id[:8]), *_skipped_outputs(11), job_id, {"id": job_id}, *_progress_updates("process", 0))
+
+
+def submit_render_from_saved_highlight(saved_file):
+    """Render a saved plan without repeating highlight, keyword, or asset selection."""
+    try:
+        payload, plan = _load_saved_highlight(saved_file)
+        source = Path(str(payload.get("source_video", ""))).expanduser().resolve()
+        if not source.is_file():
+            raise ValueError("历史高光对应的原视频已不存在：{}".format(source))
+        _remember_video_source(source)
+        restored_video_state = _rebuild_video_state_for_render(plan)
+        if restored_video_state is None:
+            raise ValueError("无法根据保存的高光和原视频重建渲染状态。")
+    except (OSError, ValueError, TypeError) as exc:
+        return (
+            "历史高光视频任务未提交：{}".format(exc),
+            *_skipped_outputs(11), "", None, *_progress_updates("render", 0),
+        )
+    logging.warning("Rendering directly from saved highlight plan: %s", saved_file)
+    return submit_render(plan, restored_video_state, "", "", None, None)
 
 
 def submit_render(llm_result, video_state, keywords, sound_bindings, library_video, uploaded_video_path):
@@ -674,6 +770,14 @@ with gr.Blocks(title="FunClip 四模块", css=OUTPUT_VIDEO_CSS) as app:
             saved_corrected_refresh_button = gr.Button("刷新保存字幕")
             saved_corrected_continue_button = gr.Button("使用已保存字幕继续处理")
 
+    with gr.Accordion("服务器历史高光", open=False):
+        saved_highlight_input = gr.Dropdown(
+            label="服务器保存的高光计划", choices=list_saved_highlights()
+        )
+        with gr.Row():
+            saved_highlight_refresh_button = gr.Button("刷新历史高光")
+            saved_highlight_render_button = gr.Button("使用历史高光直接生成视频", variant="primary")
+
     subtitle_button.click(
         submit_generate,
         inputs=[video_input, library_video_input, hotwords_input],
@@ -705,6 +809,18 @@ with gr.Blocks(title="FunClip 四模块", css=OUTPUT_VIDEO_CSS) as app:
         outputs=task_outputs,
         show_progress="hidden",
         concurrency_limit=4,
+    )
+    saved_highlight_refresh_button.click(
+        refresh_saved_highlights,
+        outputs=[saved_highlight_input],
+        show_progress="hidden",
+    )
+    saved_highlight_render_button.click(
+        submit_render_from_saved_highlight,
+        inputs=[saved_highlight_input],
+        outputs=task_outputs,
+        show_progress="hidden",
+        queue=False,
     )
     video_button.click(
         submit_render,
@@ -753,6 +869,7 @@ with gr.Blocks(title="FunClip 四模块", css=OUTPUT_VIDEO_CSS) as app:
     )
     app.load(refresh_library_videos, outputs=[library_video_input])
     app.load(refresh_saved_corrected_subtitles, outputs=[saved_corrected_input])
+    app.load(refresh_saved_highlights, outputs=[saved_highlight_input])
     job_timer = gr.Timer(value=2)
     job_timer.tick(
         poll_job,
