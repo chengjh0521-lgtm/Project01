@@ -565,19 +565,19 @@ def _burn_srt_with_ffmpeg(video_path: str | Path, clip_srt: str, keywords: str |
     highlight_keywords = _parse_keywords(keywords)
     cue_count = _write_ass_subtitles(clip_srt, subtitle_file, highlight_keywords, width, height)
 
-    filter_parts = [
-        "eq=brightness={}:contrast={}:saturation={}".format(
-            VIDEO_BRIGHTNESS,
-            VIDEO_CONTRAST,
-            VIDEO_SATURATION,
-        ),
+    color_filter = "eq=brightness={}:contrast={}:saturation={}".format(
+        VIDEO_BRIGHTNESS,
+        VIDEO_CONTRAST,
+        VIDEO_SATURATION,
+    )
+    subtitle_parts = [
         "subtitles=filename={}".format(_escape_filter_path(subtitle_file)),
         "charenc=UTF-8",
     ]
     font_dir = subtitle_fonts_directory()
     if font_dir:
-        filter_parts.append("fontsdir={}".format(_escape_filter_path(font_dir)))
-    subtitle_filter = ":".join(filter_parts)
+        subtitle_parts.append("fontsdir={}".format(_escape_filter_path(font_dir)))
+    subtitle_filter = "{},{}".format(color_filter, ":".join(subtitle_parts))
     command = [
         ffmpeg,
         "-y",
