@@ -48,6 +48,10 @@ _SRT_TIME_RE = re.compile(
     r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*$"
 )
+_HIGHLIGHT_RANGE_RE = re.compile(
+    r"\[?\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*"
+    r"(?:-|-->|~|\u2013|\u2014)\s*(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*\]?"
+)
 _MAX_CAPTION_LINE_CHARACTERS = 15
 _CAPTION_SHADOW_SIZE = 4
 _CAPTION_CONNECTORS = ("但是", "所以", "因为", "如果", "而且", "或者", "并且", "然后", "以及", "同时", "不过", "而是", "还是")
@@ -129,6 +133,45 @@ def _format_timestamp(milliseconds: int) -> str:
     minutes, remainder = divmod(remainder, 60_000)
     seconds, millis = divmod(remainder, 1_000)
     return "{:02d}:{:02d}:{:02d},{:03d}".format(hours, minutes, seconds, millis)
+
+
+def _highlight_ranges(llm_result: str) -> list[tuple[int, int]]:
+    ranges = []
+    for match in _HIGHLIGHT_RANGE_RE.finditer(str(llm_result or "")):
+        start_ms, end_ms = _time_to_ms(match.group("start")), _time_to_ms(match.group("end"))
+        if end_ms > start_ms:
+            ranges.append((start_ms, end_ms))
+    return ranges
+
+
+def _rebase_caption_srt(
+        source_srt: str,
+        llm_result: str,
+        start_offset_ms: int = 0,
+        end_offset_ms: int = 100) -> str:
+    """Map source-video caption timestamps onto the concatenated clip timeline."""
+    ranges = _highlight_ranges(llm_result)
+    if not ranges:
+        return ""
+
+    rebased, clip_offset = [], 0
+    for range_start, range_end in ranges:
+        for cue_start, cue_end, text in _parse_srt_cues(source_srt):
+            cue_start_ms, cue_end_ms = _time_to_ms(cue_start), _time_to_ms(cue_end)
+            visible_start, visible_end = max(cue_start_ms, range_start), min(cue_end_ms, range_end)
+            if visible_end <= visible_start:
+                continue
+            rebased.append({
+                "start": _format_timestamp(clip_offset + visible_start - range_start),
+                "end": _format_timestamp(clip_offset + visible_end - range_start),
+                "text": text,
+            })
+        clip_offset += max(1, range_end + int(end_offset_ms) - range_start - int(start_offset_ms))
+
+    return "\n\n".join(
+        "{}\n{} --> {}\n{}".format(index, cue["start"], cue["end"], cue["text"])
+        for index, cue in enumerate(rebased, start=1)
+    ) + ("\n" if rebased else "")
 
 
 def _sound_effect_events(clip_srt: str, sound_bindings: str | None) -> list[dict]:
@@ -681,7 +724,13 @@ def render_highlight_video(
         )
         if video is None:
             return video, audio, message, clip_srt
-        effective_srt = str(caption_srt or clip_srt)
+        source_caption_srt = str(caption_srt or "")
+        effective_srt = _rebase_caption_srt(
+            source_caption_srt, llm_result, start_offset_ms, end_offset_ms
+        ) if source_caption_srt else clip_srt
+        if source_caption_srt and not effective_srt.strip():
+            logging.warning("语义字幕无法映射到剪辑时间轴，回退为上游剪辑字幕。")
+            effective_srt = clip_srt
         captioned_video = _burn_srt_with_ffmpeg(video, effective_srt, keywords)
         visual_video, visual_count = _overlay_visual_assets(captioned_video, effective_srt, visual_bindings)
         mixed_video, sound_count = _mix_sound_effects(visual_video, effective_srt, sound_bindings)
