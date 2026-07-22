@@ -305,6 +305,11 @@ def _asset_pixel_format(asset_file: Path) -> str:
     return completed.stdout.strip() if completed.returncode == 0 and completed.stdout.strip() else "unknown"
 
 
+def _pixel_format_has_alpha(pixel_format: str) -> bool:
+    value = str(pixel_format or "").strip().lower()
+    return value in {"rgba", "bgra", "argb", "abgr"} or value.startswith(("yuva", "gbrap"))
+
+
 def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_bindings: str | None) -> tuple[str, int]:
     events = _visual_asset_events(clip_srt, visual_bindings)
     if not events:
@@ -328,10 +333,11 @@ def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_binding
         if asset_file is None:
             continue
         pixel_format = _asset_pixel_format(asset_file)
-        has_alpha = "a" in pixel_format.lower() or pixel_format.lower() in {"rgba", "bgra", "argb", "abgr"}
+        has_alpha = _pixel_format_has_alpha(pixel_format)
+        apply_chroma_key = bool(event["requires_chroma_key"]) and not has_alpha
         logging.warning(
-            "Visual asset alpha probe: id=%s file=%s pix_fmt=%s alpha=%s.",
-            event["asset_id"], asset_file, pixel_format, has_alpha,
+            "Visual asset alpha probe: id=%s file=%s pix_fmt=%s alpha=%s chroma_key=%s.",
+            event["asset_id"], asset_file, pixel_format, has_alpha, apply_chroma_key,
         )
         duration = float(event["duration_seconds"])
         if event["media_type"] == "animated_gif":
@@ -348,7 +354,7 @@ def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_binding
             "[asset_alpha_src{0}]alphaextract,scale=260:-1:flags=lanczos[asset_alpha{0}];"
             "[asset_rgb{0}][asset_alpha{0}]alphamerge,format=rgba,setsar=1"
         ).format(index)
-        if event["requires_chroma_key"]:
+        if apply_chroma_key:
             asset_filter += ",chromakey=0x00FF00:0.16:0.08"
         asset_filter += ",trim=duration={:.3f},setpts=PTS-STARTPTS+{:.3f}/TB[{}]".format(
             duration, int(event["offset_ms"]) / 1000, asset_label

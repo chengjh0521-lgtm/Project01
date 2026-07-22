@@ -21,7 +21,7 @@ class VisualAssetRenderingTests(unittest.TestCase):
                 "duration_seconds": 1.0,
                 "media_type": "image",
                 "offset_ms": 0,
-                "requires_chroma_key": False,
+                "requires_chroma_key": True,
                 "position": "caption_lower_left",
             }]
             with patch("video_generation.render._visual_asset_events", return_value=events), patch(
@@ -41,6 +41,7 @@ class VisualAssetRenderingTests(unittest.TestCase):
         self.assertIn("[1:v]format=rgba,split=2[asset_rgb_src1][asset_alpha_src1]", filters)
         self.assertIn("[asset_alpha_src1]alphaextract,scale=260:-1:flags=lanczos[asset_alpha1]", filters)
         self.assertIn("[asset_rgb1][asset_alpha1]alphamerge,format=rgba,setsar=1", filters)
+        self.assertNotIn("chromakey=", filters)
         self.assertIn("overlay=x=W*0.22:y=H*0.70:eof_action=pass:shortest=0:format=rgb:alpha=straight", filters)
         self.assertIn("format=yuv420p[visual_yuv]", filters)
 
