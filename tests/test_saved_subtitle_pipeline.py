@@ -17,6 +17,8 @@ class SavedSubtitlePipelineTests(unittest.TestCase):
 
         with patch("subtitle_processing.pipeline.select_multiple", return_value=[candidate]), patch(
             "subtitle_processing.pipeline.build_highlight_srt", return_value=corrected_srt
+        ), patch(
+            "subtitle_processing.pipeline.build_semantic_highlight_srt", return_value=corrected_srt
         ), patch("subtitle_processing.pipeline.select_keywords_for_clip", return_value="Corrected"), patch(
             "subtitle_processing.pipeline.select_sound_cues", return_value='{"cues": []}'
         ), patch("subtitle_processing.pipeline.select_visual_assets", return_value='{"placements": []}'):

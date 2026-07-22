@@ -16,6 +16,7 @@ from subtitle_processing.visual_asset_binding import select_visual_assets
 from subtitle_processing.multi_highlight_stage import select_multiple
 from subtitle_processing.keyword_stage import select_keywords as select_keywords_for_clip
 from subtitle_processing.correction_stage import run as run_correction_stage
+from subtitle_processing.semantic_caption_stage import SemanticCaptionError, segment_highlight_cues
 
 _SRT_TIME_RE = re.compile(
     r"^\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*"
@@ -437,6 +438,34 @@ def build_highlight_srt(srt_text: str, ranges: list[tuple[str, str]]) -> str:
         raise SubtitlePipelineError("高光时间戳没有匹配到校对后的字幕。")
     return render_srt(selected)
 
+def build_semantic_highlight_srt(srt_text: str, api_key: str, model: str, status_callback=None) -> str:
+    """Ask DeepSeek to make short semantic captions without changing their source text."""
+    source_cues = parse_srt(srt_text)
+    for attempt in range(1, 4):
+        if status_callback:
+            status_callback("Stage 2/5: splitting highlight captions by meaning (attempt {}/3).".format(attempt))
+        try:
+            segmented = segment_highlight_cues(
+                source_cues,
+                lambda system, user: _call_deepseek(
+                    system, user, "", api_key, model,
+                    "semantic-caption stage attempt {}/3".format(attempt), json_response=True,
+                ),
+            )
+            logging.warning(
+                "Semantic highlight caption split complete: %d source cues became %d cues.",
+                len(source_cues), len(segmented),
+            )
+            return render_srt(segmented)
+        except SemanticCaptionError as exc:
+            logging.warning("Semantic highlight caption split attempt %d/3 failed validation: %s", attempt, exc)
+
+    logging.warning("Semantic caption splitting failed repeatedly; retaining the source highlight captions without hard cuts.")
+    if status_callback:
+        status_callback("Stage 2/5: semantic caption splitting failed validation; source captions retained.")
+    return srt_text
+
+
 
 def build_corrected_video_state(video_state, corrected_srt: str):
     if video_state is None:
@@ -605,6 +634,9 @@ def _process_from_corrected_subtitles(
         raise SubtitlePipelineError("未提取到满足重合度限制的高光素材。")
     for index, candidate in enumerate(candidates, start=1):
         highlight_srt = build_highlight_srt(corrected_srt, candidate["ranges"])
+        highlight_srt = build_semantic_highlight_srt(
+            highlight_srt, api_key, selected_model, status_callback
+        )
         keywords = select_keywords_for_clip(
             highlight_srt, keyword_count,
             lambda system, user: _call_deepseek(system, user, "", api_key, selected_model, "keyword stage"),

@@ -666,6 +666,7 @@ def render_highlight_video(
         sound_bindings: str | None = None,
         visual_bindings: str | None = None,
         question: str | None = None,
+        caption_srt: str | None = None,
         start_offset_ms: int = 0,
         end_offset_ms: int = 100):
     """Render LLM timestamp ranges. Returns video, audio, message, and clip SRT."""
@@ -680,9 +681,10 @@ def render_highlight_video(
         )
         if video is None:
             return video, audio, message, clip_srt
-        captioned_video = _burn_srt_with_ffmpeg(video, clip_srt, keywords)
-        visual_video, visual_count = _overlay_visual_assets(captioned_video, clip_srt, visual_bindings)
-        mixed_video, sound_count = _mix_sound_effects(visual_video, clip_srt, sound_bindings)
+        effective_srt = str(caption_srt or clip_srt)
+        captioned_video = _burn_srt_with_ffmpeg(video, effective_srt, keywords)
+        visual_video, visual_count = _overlay_visual_assets(captioned_video, effective_srt, visual_bindings)
+        mixed_video, sound_count = _mix_sound_effects(visual_video, effective_srt, sound_bindings)
         layout_video = _burn_reference_layout(mixed_video, question)
         # The expert label belongs to the main consultation footage only. Burn
         # it before concatenation so the three-second question card stays clean.
@@ -694,7 +696,7 @@ def render_highlight_video(
         )
         return final_video, audio, "{}; burned subtitles via FFmpeg; reference layout=True; question intro={}; {} GIF/PNG assets overlaid; fixed doctor label=True; {} sound effects mixed".format(
             message, bool(str(question or "").strip()), visual_count, sound_count
-        ), clip_srt
+        ), effective_srt
     return launch.AI_clip(
         llm_result, "", "", start_offset_ms, end_offset_ms,
         video_state, None, str(output_dir),
