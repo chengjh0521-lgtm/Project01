@@ -339,9 +339,15 @@ def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_binding
         else:
             command.extend(["-loop", "1", "-framerate", "30", "-t", "{:.3f}".format(duration), "-i", str(asset_file)])
         asset_label, output_label = "asset{}".format(index), "visual{}".format(index)
-        # Do not send alpha images through fps before compositing. Some FFmpeg
-        # builds negotiate that filter to RGB and lose transparent pixels.
-        asset_filter = "[{}:v]format=rgba,scale=260:-1:flags=lanczos,format=rgba,setsar=1".format(index)
+        # Extract and re-merge alpha explicitly. Palette GIFs can advertise
+        # BGRA yet lose their transparent index in an implicit scale/overlay
+        # conversion, which leaves a white rectangle in the rendered video.
+        asset_filter = (
+            "[{0}:v]format=rgba,split=2[asset_rgb_src{0}][asset_alpha_src{0}];"
+            "[asset_rgb_src{0}]format=rgb24,scale=260:-1:flags=lanczos[asset_rgb{0}];"
+            "[asset_alpha_src{0}]alphaextract,scale=260:-1:flags=lanczos[asset_alpha{0}];"
+            "[asset_rgb{0}][asset_alpha{0}]alphamerge,format=rgba,setsar=1"
+        ).format(index)
         if event["requires_chroma_key"]:
             asset_filter += ",chromakey=0x00FF00:0.16:0.08"
         asset_filter += ",trim=duration={:.3f},setpts=PTS-STARTPTS+{:.3f}/TB[{}]".format(
