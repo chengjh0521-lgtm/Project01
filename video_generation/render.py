@@ -482,7 +482,10 @@ def _escape_ass_text(text: str) -> str:
     return str(text or "").replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
 
 
-def _title_lines(title: str) -> tuple[str, str]:
+def _title_lines(title: str, explicit_lines: list[str] | None = None) -> tuple[str, str]:
+    clean_lines = ["".join(str(line or "").split()) for line in (explicit_lines or [])]
+    if len(clean_lines) == 2 and all(clean_lines):
+        return clean_lines[0], clean_lines[1]
     compact = "".join(str(title or "").split())
     if len(compact) <= 8:
         return compact, ""
@@ -496,9 +499,11 @@ def _title_lines(title: str) -> tuple[str, str]:
     return compact[:split_at], compact[split_at:]
 
 
-def _write_reference_layout_ass(title: str, ass_file: Path, width: int, height: int) -> None:
+def _write_reference_layout_ass(
+        title: str, ass_file: Path, width: int, height: int,
+        title_lines: list[str] | None = None) -> None:
     """Write the top title and medical disclaimer using the approved reference layout."""
-    title_one, title_two = _title_lines(title)
+    title_one, title_two = _title_lines(title, title_lines)
     title_one_x, title_one_y = scaled_position(TITLE_LINE_ONE, width, height)
     title_two_x, title_two_y = scaled_position(TITLE_LINE_TWO, width, height)
     disclaimer_x, disclaimer_y = scaled_position(DISCLAIMER_CENTER, width, height)
@@ -549,12 +554,13 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
     ass_file.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
 
 
-def _burn_reference_layout(video_path: str | Path, title: str | None) -> str:
+def _burn_reference_layout(
+        video_path: str | Path, title: str | None, title_lines: list[str] | None = None) -> str:
     source = Path(video_path).resolve()
     width, height = _video_dimensions(source)
     ass_file = source.with_name("{}_reference_layout.ass".format(source.stem))
     output = source.with_name("{}_reference_layout{}".format(source.stem, source.suffix))
-    _write_reference_layout_ass(str(title or ""), ass_file, width, height)
+    _write_reference_layout_ass(str(title or ""), ass_file, width, height, title_lines)
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("服务器未安装 ffmpeg，无法烧录参考版标题布局。")
@@ -709,6 +715,7 @@ def render_highlight_video(
         sound_bindings: str | None = None,
         visual_bindings: str | None = None,
         question: str | None = None,
+        question_lines: list[str] | None = None,
         caption_srt: str | None = None,
         start_offset_ms: int = 0,
         end_offset_ms: int = 100):
@@ -734,12 +741,12 @@ def render_highlight_video(
         captioned_video = _burn_srt_with_ffmpeg(video, effective_srt, keywords)
         visual_video, visual_count = _overlay_visual_assets(captioned_video, effective_srt, visual_bindings)
         mixed_video, sound_count = _mix_sound_effects(visual_video, effective_srt, sound_bindings)
-        layout_video = _burn_reference_layout(mixed_video, question)
+        layout_video = _burn_reference_layout(mixed_video, question, question_lines)
         # The expert label belongs to the main consultation footage only. Burn
         # it before concatenation so the three-second question card stays clean.
         labelled_main_video = apply_doctor_label(layout_video)
         final_video = (
-            prepend_question_intro(labelled_main_video, question)
+            prepend_question_intro(labelled_main_video, question, question_lines)
             if str(question or "").strip()
             else labelled_main_video
         )

@@ -57,7 +57,22 @@ def _wrap_question_text(question: str) -> str:
     return "\\N".join(lines)
 
 
-def _write_question_ass(question: str, ass_path: Path, width: int, height: int) -> None:
+def _display_question_text(question: str, question_lines: list[str] | None = None) -> str:
+    lines = [
+        "".join(str(line or "").split())
+        .replace("\\", r"\\")
+        .replace("{", r"\{")
+        .replace("}", r"\}")
+        for line in (question_lines or [])
+    ]
+    if len(lines) == 2 and all(lines) and all(len(line) <= MAX_QUESTION_LINE_CHARACTERS for line in lines):
+        return "\\N".join(lines)
+    return _wrap_question_text(question)
+
+
+def _write_question_ass(
+        question: str, ass_path: Path, width: int, height: int,
+        question_lines: list[str] | None = None) -> None:
     base_font_size = max(44, min(80, round(min(width, height) * 0.07)))
     font_size = base_font_size * 2
     top_margin = round(height * 0.70)
@@ -81,7 +96,7 @@ Dialogue: 0,0:00:00.00,0:00:03.00,Question,,0,0,0,,{text}
         font_size=font_size,
         text_color=QUESTION_TEXT_ASS_COLOR,
         top_margin=top_margin,
-        text=_wrap_question_text(escaped),
+        text=_display_question_text(escaped, question_lines),
     )
     ass_path.write_text(header, encoding="utf-8")
 
@@ -145,6 +160,7 @@ def _video_dimensions(video_path: Path) -> tuple[int, int]:
 def create_question_intro(
         question: str,
         *,
+        question_lines: list[str] | None = None,
         background_path: str | Path | None = None,
         output_path: str | Path | None = None,
         width: int = 1080,
@@ -168,7 +184,7 @@ def create_question_intro(
     destination.parent.mkdir(parents=True, exist_ok=True)
     audio_path = destination.with_suffix(".mp3")
     subtitle_path = destination.with_suffix(".ass")
-    _write_question_ass(text, subtitle_path, width, height)
+    _write_question_ass(text, subtitle_path, width, height, question_lines)
 
     _synthesize_question_audio(text, audio_path, voice, DEFAULT_TTS_RATE)
     duration = _audio_duration_seconds(audio_path)
@@ -212,7 +228,8 @@ def create_question_intro(
     return str(destination)
 
 
-def prepend_question_intro(video_path: str | Path, question: str) -> str:
+def prepend_question_intro(
+        video_path: str | Path, question: str, question_lines: list[str] | None = None) -> str:
     """Create and prepend a narrated question card, keeping the main video's dimensions."""
     source = Path(video_path).expanduser().resolve()
     if not source.is_file():
@@ -220,6 +237,7 @@ def prepend_question_intro(video_path: str | Path, question: str) -> str:
     width, height = _video_dimensions(source)
     intro = create_question_intro(
         question,
+        question_lines=question_lines,
         output_path=source.with_name("{}_question_intro.mp4".format(source.stem)),
         width=width,
         height=height,

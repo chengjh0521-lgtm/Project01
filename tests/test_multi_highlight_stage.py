@@ -16,7 +16,7 @@ class MultiHighlightStageTests(unittest.TestCase):
 
     def test_parse_highlight_selection_keeps_the_question_and_reason(self):
         response = (
-            '{"question":"糖尿病能喝酒吗？",'
+            '{"question_lines":["糖尿病能","喝酒吗？"],'
             '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],'
             '"reason":"Clear recommendation."}'
         )
@@ -24,6 +24,7 @@ class MultiHighlightStageTests(unittest.TestCase):
             parse_highlight_selection(response),
             {
                 "question": "糖尿病能喝酒吗？",
+                "question_lines": ["糖尿病能", "喝酒吗？"],
                 "ranges": [("00:00:01,000", "00:00:42,000")],
                 "reason": "Clear recommendation.",
             },
@@ -32,7 +33,7 @@ class MultiHighlightStageTests(unittest.TestCase):
     def test_select_multiple_retries_after_invalid_model_response(self):
         responses = iter([
             "I cannot choose a clip.",
-            '{"question":"糖尿病能喝酒吗？",'
+            '{"question_lines":["糖尿病能","喝酒吗？"],'
             '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Clear answer."}',
         ])
 
@@ -40,11 +41,12 @@ class MultiHighlightStageTests(unittest.TestCase):
 
         self.assertEqual(selected[0]["ranges"], [("00:00:01,000", "00:00:42,000")])
         self.assertEqual(selected[0]["question"], "糖尿病能喝酒吗？")
+        self.assertEqual(selected[0]["question_lines"], ["糖尿病能", "喝酒吗？"])
 
     def test_select_multiple_retries_when_a_question_is_missing(self):
         responses = iter([
             '{"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}]}',
-            '{"question":"患者应该怎么做？",'
+            '{"question_lines":["患者应该","怎么做？"],'
             '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Clear answer."}',
         ])
 
@@ -54,9 +56,9 @@ class MultiHighlightStageTests(unittest.TestCase):
 
     def test_select_multiple_retries_when_a_question_exceeds_the_intro_limit(self):
         responses = iter([
-            '{"question":"糖尿病患者日常生活中究竟能不能适量喝酒呢？",'
+            '{"question_lines":["糖尿病患者日常","生活中究竟能不","能适量喝酒呢？"],'
             '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Too long."}',
-            '{"question":"糖尿病能喝酒吗？",'
+            '{"question_lines":["糖尿病能","喝酒吗？"],'
             '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Short answer."}',
         ])
 

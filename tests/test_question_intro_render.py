@@ -18,14 +18,15 @@ class QuestionIntroRenderTests(unittest.TestCase):
             "video_generation.render.apply_doctor_label", return_value="labelled_main.mp4"
         ) as label:
             video, _, message, _ = render_highlight_video(
-                "[00:00:01,000-00:00:02,000]", {}, question="糖尿病能喝酒吗？"
+                "[00:00:01,000-00:00:02,000]", {}, question="糖尿病能喝酒吗？",
+                question_lines=["糖尿病能", "喝酒吗？"],
             )
 
         self.assertEqual(video, "final.mp4")
         self.assertIn("question intro=True", message)
-        layout.assert_called_once_with("mixed.mp4", "糖尿病能喝酒吗？")
+        layout.assert_called_once_with("mixed.mp4", "糖尿病能喝酒吗？", ["糖尿病能", "喝酒吗？"])
         label.assert_called_once_with("layout.mp4")
-        prepend.assert_called_once_with("labelled_main.mp4", "糖尿病能喝酒吗？")
+        prepend.assert_called_once_with("labelled_main.mp4", "糖尿病能喝酒吗？", ["糖尿病能", "喝酒吗？"])
 
 
 if __name__ == "__main__":

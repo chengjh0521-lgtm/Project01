@@ -27,6 +27,14 @@ class QuestionIntroTests(unittest.TestCase):
         self.assertNotIn("\\N？", wrapped)
         self.assertNotIn("\\N?", wrapped)
 
+    def test_model_supplied_two_lines_are_preserved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ass_path = Path(temporary) / "question.ass"
+            _write_question_ass("糖尿病患者能不能喝酒？", ass_path, 1080, 1920, ["糖尿病患者", "能不能喝酒？"])
+            ass = ass_path.read_text(encoding="utf-8")
+
+        self.assertIn("糖尿病患者\\N能不能喝酒？", ass)
+
     def test_question_text_is_double_sized_and_starts_at_half_height(self):
         with tempfile.TemporaryDirectory() as temporary:
             ass_path = Path(temporary) / "question.ass"

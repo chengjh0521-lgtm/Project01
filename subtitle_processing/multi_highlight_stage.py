@@ -12,7 +12,8 @@ TIME_RE = re.compile(
     r"\[?\s*(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*(?:-|-->|~|\u2013|\u2014)\s*"
     r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*\]?"
 )
-MAX_QUESTION_CHARACTERS = 18
+QUESTION_LINE_COUNT = 2
+MAX_QUESTION_LINE_CHARACTERS = 7
 
 SYSTEM_PROMPT = """
 你是医学科普短视频选题与剪辑分析器。请从完整 SRT 中选择一段适合传播的独立内容。
@@ -22,10 +23,10 @@ SYSTEM_PROMPT = """
 所选字幕必须只围绕该问题，包含必要结论、原因或建议，使观众不依赖原视频上下文也能理解答案。删除寒暄、病史确认、重复、无意义停顿和与该问题无关的内容。成片总时长通常为 40 到 90 秒，可由多个不连续片段组成；优先选择结论明确、对普通观众有价值、逻辑完整的医生解释。
 
 只返回一个合法 JSON 对象，不得输出 Markdown 或其他解释：
-{"question":"糖尿病患者能不能喝酒？","ranges":[{"start":"00:00:01,000","end":"00:00:12,500"}],"reason":"该片段给出明确结论、风险原因和可执行建议"}
+{"question_lines":["糖尿病患者","能不能喝酒？"],"ranges":[{"start":"00:00:01,000","end":"00:00:12,500"}],"reason":"该片段给出明确结论、风险原因和可执行建议"}
 
-question 必须是非空字符串，去除空白后最多 18 个字符（包括标点）；start 和 end 必须完全来自输入 SRT 时间轴。无法选择一个能完整回答明确问题的片段时，返回：
-{"question":"","ranges":[],"reason":""}
+question_lines 必须恰好包含两条非空字符串。每条去除空白后最多 7 个字符（包括标点），两条按顺序拼接后必须是一个自然、完整、可由观众提出的问题。不得将问号单独作为一行；不得输出 question 字段。start 和 end 必须完全来自输入 SRT 时间轴。无法选择一个能完整回答明确问题的片段时，返回：
+{"question_lines":[],"ranges":[],"reason":""}
 """.strip()
 
 
@@ -59,19 +60,29 @@ def _load_json_object(text: str) -> dict | None:
     return None
 
 
-def _valid_question(question: str) -> bool:
-    return bool(question) and len(re.sub(r"\s+", "", question)) <= MAX_QUESTION_CHARACTERS
+def _normalize_question_lines(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [re.sub(r"\s+", "", str(line or "")) for line in value]
+
+
+def _valid_question_lines(lines: list[str]) -> bool:
+    return (
+        len(lines) == QUESTION_LINE_COUNT
+        and all(0 < len(line) <= MAX_QUESTION_LINE_CHARACTERS for line in lines)
+        and any(char not in "？?！!。" for char in lines[-1])
+    )
 
 
 def parse_highlight_selection(text: str) -> dict:
     """Parse one LLM highlight candidate and retain its answerable question."""
     seen, values = set(), []
-    question, reason = "", ""
+    question_lines, reason = [], ""
     try:
         payload = _load_json_object(text)
         items = payload.get("ranges", []) if isinstance(payload, dict) else []
         if isinstance(payload, dict):
-            question = str(payload.get("question", "")).strip()
+            question_lines = _normalize_question_lines(payload.get("question_lines"))
             reason = str(payload.get("reason", "")).strip()
         for item in items:
             if not isinstance(item, dict):
@@ -81,7 +92,12 @@ def parse_highlight_selection(text: str) -> dict:
                 values.append((start, end))
                 seen.add((start, end))
         if values or isinstance(payload, dict):
-            return {"ranges": values, "question": question, "reason": reason}
+            return {
+                "ranges": values,
+                "question": "".join(question_lines),
+                "question_lines": question_lines,
+                "reason": reason,
+            }
     except ValueError:
         pass
     for match in TIME_RE.finditer(text):
@@ -89,7 +105,7 @@ def parse_highlight_selection(text: str) -> dict:
         if _ms(end) > _ms(start) and (start, end) not in seen:
             values.append((start, end))
             seen.add((start, end))
-    return {"ranges": values, "question": question, "reason": reason}
+    return {"ranges": values, "question": "", "question_lines": [], "reason": reason}
 
 
 def parse_ranges(text: str) -> list[tuple[str, str]]:
@@ -136,11 +152,11 @@ def select_multiple(
             "完整素材如下：\n{}\n\n已选素材如下：\n{}\n\n"
             "请提取一个新的、能完整回答明确问题的主题或不同角度。新问题不能与已选问题重复；"
             "新素材与所有已选素材的重合时长不得超过新素材总时长的 30%。"
-            "如果无法提取合规的新素材，返回 {{\"question\":\"\",\"ranges\":[],\"reason\":\"\"}}。"
+            "如果无法提取合规的新素材，返回 {{\"question_lines\":[],\"ranges\":[],\"reason\":\"\"}}。"
         ).format(corrected_srt, previous)
         if report:
             report("阶段 2/5：正在提取第 {} 条低重合高光候选。".format(number))
-        raw, ranges, question, reason = "", [], "", ""
+        raw, ranges, question, question_lines, reason = "", [], "", [], ""
         for attempt in range(1, 4):
             raw = call_llm(
                 SYSTEM_PROMPT,
@@ -150,19 +166,21 @@ def select_multiple(
             selection = parse_highlight_selection(raw)
             ranges = selection["ranges"]
             question = selection["question"]
+            question_lines = selection["question_lines"]
             reason = selection["reason"]
             overlap = overlap_ratio(ranges, selected_ranges) if ranges else 1.0
-            if ranges and _valid_question(question) and overlap <= max_overlap:
+            if ranges and _valid_question_lines(question_lines) and overlap <= max_overlap:
                 break
             logging.warning(
-                "Multi-highlight candidate %d attempt %d rejected: valid_question=%s, ranges=%d, overlap=%.1f%%.",
-                number, attempt, _valid_question(question), len(ranges), overlap * 100,
+                "Multi-highlight candidate %d attempt %d rejected: valid_question_lines=%s, ranges=%d, overlap=%.1f%%.",
+                number, attempt, _valid_question_lines(question_lines), len(ranges), overlap * 100,
             )
-        if not ranges or not _valid_question(question) or overlap_ratio(ranges, selected_ranges) > max_overlap:
+        if not ranges or not _valid_question_lines(question_lines) or overlap_ratio(ranges, selected_ranges) > max_overlap:
             break
         selected.append({
             "id": "clip_{:02d}".format(number),
             "question": question,
+            "question_lines": question_lines,
             "highlight_reason": reason,
             "ranges": ranges,
             "raw_result": raw,
