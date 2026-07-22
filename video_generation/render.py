@@ -302,7 +302,9 @@ def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_binding
     source = Path(video_path).resolve()
     output = source.with_name("{}_visual{}".format(source.stem, source.suffix))
     command = [ffmpeg, "-y", "-i", str(source)]
-    filters, previous = [], "0:v"
+    # Composite in RGBA explicitly. Letting overlay auto-negotiate from a YUV
+    # main video can flatten alpha-only PNG/GIF pixels to white on some builds.
+    filters, previous = ["[0:v]format=rgba[base_rgba]"], "base_rgba"
     for index, event in enumerate(events, start=1):
         asset_file = resolve_visual_asset_file(str(event["asset_id"]))
         if asset_file is None:
@@ -323,15 +325,17 @@ def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_binding
         x, y = _visual_position(str(event["position"]))
         filters.extend([
             asset_filter,
-            "[{}][{}]overlay=x={}:y={}:eof_action=pass:shortest=0:format=auto:alpha=straight[{}]".format(
+            "[{}][{}]overlay=x={}:y={}:eof_action=pass:shortest=0:format=rgb:alpha=straight[{}]".format(
                 previous, asset_label, x, y, output_label
             ),
         ])
         previous = output_label
-    if previous == "0:v":
+    if previous == "base_rgba":
         return str(video_path), 0
+    final_label = "visual_yuv"
+    filters.append("[{}]format=yuv420p[{}]".format(previous, final_label))
     command.extend([
-        "-filter_complex", ";".join(filters), "-map", "[{}]".format(previous), "-map", "0:a?",
+        "-filter_complex", ";".join(filters), "-map", "[{}]".format(final_label), "-map", "0:a?",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "copy",
         "-movflags", "+faststart", str(output),
     ])
