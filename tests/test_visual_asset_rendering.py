@@ -26,6 +26,7 @@ class VisualAssetRenderingTests(unittest.TestCase):
             }]
             with patch("video_generation.render._visual_asset_events", return_value=events), patch(
                 "video_generation.render.resolve_visual_asset_file", return_value=asset
+            ), patch("video_generation.render._asset_pixel_format", return_value="rgba"
             ), patch("video_generation.render.shutil.which", return_value="ffmpeg"), patch(
                 "video_generation.render.subprocess.run"
             ) as run:
@@ -37,6 +38,7 @@ class VisualAssetRenderingTests(unittest.TestCase):
         self.assertEqual(Path(result).name, output.name)
         self.assertEqual(count, 1)
         self.assertIn("[0:v]format=rgba[base_rgba]", filters)
+        self.assertIn("[1:v]format=rgba,scale=260:-1:flags=lanczos,format=rgba,setsar=1", filters)
         self.assertIn("overlay=x=W*0.22:y=H*0.70:eof_action=pass:shortest=0:format=rgb:alpha=straight", filters)
         self.assertIn("format=yuv420p[visual_yuv]", filters)
 

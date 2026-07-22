@@ -287,6 +287,24 @@ def _visual_position(position: str) -> tuple[str, str]:
     return positions.get(position, positions["caption_lower_left"])
 
 
+def _asset_pixel_format(asset_file: Path) -> str:
+    """Best-effort alpha diagnostic for the exact file selected by the LLM."""
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return "unknown (ffprobe unavailable)"
+    completed = subprocess.run(
+        [
+            ffprobe, "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=pix_fmt", "-of", "default=noprint_wrappers=1:nokey=1",
+            str(asset_file),
+        ],
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    return completed.stdout.strip() if completed.returncode == 0 and completed.stdout.strip() else "unknown"
+
+
 def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_bindings: str | None) -> tuple[str, int]:
     events = _visual_asset_events(clip_srt, visual_bindings)
     if not events:
@@ -309,14 +327,21 @@ def _overlay_visual_assets(video_path: str | Path, clip_srt: str, visual_binding
         asset_file = resolve_visual_asset_file(str(event["asset_id"]))
         if asset_file is None:
             continue
+        pixel_format = _asset_pixel_format(asset_file)
+        has_alpha = "a" in pixel_format.lower() or pixel_format.lower() in {"rgba", "bgra", "argb", "abgr"}
+        logging.warning(
+            "Visual asset alpha probe: id=%s file=%s pix_fmt=%s alpha=%s.",
+            event["asset_id"], asset_file, pixel_format, has_alpha,
+        )
         duration = float(event["duration_seconds"])
         if event["media_type"] == "animated_gif":
             command.extend(["-stream_loop", "-1", "-i", str(asset_file)])
         else:
-            command.extend(["-loop", "1", "-t", "{:.3f}".format(duration), "-i", str(asset_file)])
+            command.extend(["-loop", "1", "-framerate", "30", "-t", "{:.3f}".format(duration), "-i", str(asset_file)])
         asset_label, output_label = "asset{}".format(index), "visual{}".format(index)
-        # Keep PNG/GIF alpha through scaling; FFmpeg otherwise may flatten it on some builds.
-        asset_filter = "[{}:v]fps=15,format=rgba,scale=260:-1:flags=lanczos,setsar=1".format(index)
+        # Do not send alpha images through fps before compositing. Some FFmpeg
+        # builds negotiate that filter to RGB and lose transparent pixels.
+        asset_filter = "[{}:v]format=rgba,scale=260:-1:flags=lanczos,format=rgba,setsar=1".format(index)
         if event["requires_chroma_key"]:
             asset_filter += ",chromakey=0x00FF00:0.16:0.08"
         asset_filter += ",trim=duration={:.3f},setpts=PTS-STARTPTS+{:.3f}/TB[{}]".format(
