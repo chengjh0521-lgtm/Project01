@@ -7,6 +7,7 @@ import re
 import json
 import logging
 import time
+import http.client
 import urllib.error
 import urllib.request
 
@@ -250,7 +251,7 @@ def _call_deepseek(
             last_error = "HTTP {}: {}".format(exc.code, body or exc.reason)
             if exc.code in (400, 401, 402, 403, 404, 422):
                 break
-        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        except (http.client.IncompleteRead, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
             last_error = str(exc)
         if attempt < DEEPSEEK_MAX_RETRIES:
             wait_seconds = min(2 ** attempt * 2, 45)
