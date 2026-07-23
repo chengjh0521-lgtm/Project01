@@ -5,6 +5,7 @@ from pathlib import Path
 from video_generation.render import (
     _caption_font_size,
     _caption_display_events,
+    _impact_caption_display_events,
     _strip_caption_fillers,
     _title_lines,
     _write_ass_subtitles,
@@ -54,6 +55,29 @@ class CaptionWrappingTests(unittest.TestCase):
         self.assertGreater(len(events), 1)
         self.assertTrue(all("\n" not in line for _, _, line in events))
         self.assertEqual("".join(line for _, _, line in events), "糖尿病患者控制血糖很重要，但是不能因此过度焦虑。")
+
+    def test_first_impact_keyword_becomes_a_separate_title_size_event(self):
+        events = _impact_caption_display_events(
+            "00:00:00,000", "00:00:04,000", "糖前期就会发展成糖尿病", ["糖尿病"], set()
+        )
+
+        self.assertEqual([item[2] for item in events], ["糖前期就会发展成", "糖尿病"])
+        self.assertEqual([item[3] for item in events], [False, True])
+
+    def test_impact_keyword_is_enlarged_only_at_its_first_appearance(self):
+        srt = (
+            "1\n00:00:00,000 --> 00:00:03,000\n糖前期就会发展成糖尿病\n\n"
+            "2\n00:00:03,000 --> 00:00:06,000\n糖尿病需要长期管理\n"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            ass_path = Path(temporary) / "captions.ass"
+            _write_ass_subtitles(srt, ass_path, ["糖尿病"], impact_keywords=["糖尿病"])
+            rendered = ass_path.read_text(encoding="utf-8")
+
+        self.assertIn("Style: Impact,STHeiti,110,", rendered)
+        self.assertEqual(rendered.count(",Impact,,0,0,0,,"), 1)
+        self.assertIn("糖前期就会发展成", rendered)
+        self.assertIn("糖尿病需要长期管理", rendered)
 
     def test_ass_caption_uses_cleaned_display_text(self):
         srt = "1\n00:00:00,000 --> 00:00:03,000\n嗯，糖尿病患者啊，不能喝酒。\n"

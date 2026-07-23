@@ -638,10 +638,21 @@ def _process_from_corrected_subtitles(
         highlight_srt = build_semantic_highlight_srt(
             highlight_srt, api_key, selected_model, status_callback
         )
-        keywords = select_keywords_for_clip(
+        keyword_result = select_keywords_for_clip(
             highlight_srt, keyword_count,
             lambda system, user: _call_deepseek(system, user, "", api_key, selected_model, "keyword stage"),
+            include_reasons=True,
         )
+        if isinstance(keyword_result, tuple):
+            keywords, keyword_reasons = keyword_result
+        else:
+            # Compatibility for integrations that still patch the old string-only stage.
+            keywords, keyword_reasons = str(keyword_result or ""), []
+        impact_keywords = [
+            str(item.get("word"))
+            for item in keyword_reasons
+            if isinstance(item, dict) and item.get("impact") and str(item.get("word") or "")
+        ][:2]
         if status_callback:
             status_callback("阶段 4/5：正在为第 {} / {} 条素材选择 GIF/PNG。".format(index, len(candidates)))
         try:
@@ -667,6 +678,8 @@ def _process_from_corrected_subtitles(
         candidate.update({
             "highlight_srt": highlight_srt,
             "keywords": keywords,
+            "keyword_reasons": keyword_reasons,
+            "impact_keywords": impact_keywords,
             "sound_bindings": sound_bindings,
             "visual_bindings": visual_bindings,
         })

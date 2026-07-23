@@ -516,6 +516,7 @@ def submit_render(llm_result, video_state, keywords, sound_bindings, library_vid
                     ranges,
                     resolved_video_state,
                     keywords=clip["keywords"],
+                    impact_keywords=clip.get("impact_keywords"),
                     sound_bindings=clip["sound_bindings"],
                     visual_bindings=clip.get("visual_bindings"),
                     question=clip.get("question"),

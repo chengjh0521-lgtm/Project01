@@ -497,6 +497,37 @@ def _caption_display_events(start: str, end: str, text: str) -> list[tuple[str, 
     return events
 
 
+def _impact_caption_display_events(
+        start: str, end: str, text: str, impact_keywords: list[str], used_keywords: set[str],
+) -> list[tuple[str, str, str, bool]]:
+    """Split the first appearance of a high-impact keyword into a title-size event."""
+    events = []
+    for event_start, event_end, line in _caption_display_events(start, end, text):
+        candidates = [
+            (line.find(keyword), keyword)
+            for keyword in impact_keywords
+            if keyword not in used_keywords and keyword and keyword in line
+        ]
+        if not candidates:
+            events.append((event_start, event_end, line, False))
+            continue
+        word_index, keyword = min(candidates, key=lambda item: (item[0], -len(item[1])))
+        before, after = line[:word_index], line[word_index + len(keyword):]
+        pieces = [(before, False), (keyword, True), (after, False)]
+        pieces = [(value, is_impact) for value, is_impact in pieces if value]
+        start_ms, end_ms = _time_to_ms(event_start.replace(".", ",")), _time_to_ms(event_end.replace(".", ","))
+        duration = max(1, end_ms - start_ms)
+        total_weight = max(1, sum(len(value) for value, _ in pieces))
+        cursor, consumed = start_ms, 0
+        for index, (value, is_impact) in enumerate(pieces):
+            consumed += len(value)
+            next_cursor = end_ms if index == len(pieces) - 1 else start_ms + round(duration * consumed / total_weight)
+            events.append((_ass_timecode_from_ms(cursor), _ass_timecode_from_ms(max(cursor + 1, next_cursor)), value, is_impact))
+            cursor = next_cursor
+        used_keywords.add(keyword)
+    return events
+
+
 def _highlight_ass_text(text: str, keywords: list[str]) -> str:
     escaped = (
         text.replace("\\", r"\\")
@@ -633,6 +664,7 @@ def _write_ass_subtitles(
         keywords: list[str],
         width: int = REFERENCE_WIDTH,
         height: int = REFERENCE_HEIGHT,
+        impact_keywords: list[str] | None = None,
 ) -> int:
     cues = _parse_srt_cues(clip_srt)
     if not cues:
@@ -646,6 +678,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
 Style: Default,{font_family},{font_size},&H00FFFFFF,&H0000FFFF,&H00101010,&H80000000,0,0,0,0,100,100,0,0,1,2,{shadow_size},5,48,48,0,1
+Style: Impact,{font_family},{impact_font_size},&H0000FFFF,&H0000FFFF,&H00101010,&H90000000,1,0,0,0,100,100,0,0,1,3,5,5,48,48,0,1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
@@ -654,28 +687,35 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
         height=height,
         font_family=unified_font_family(),
         font_size=scaled_font_size(CAPTION_FONT_SIZE, width, height),
+        impact_font_size=scaled_font_size(TITLE_FONT_SIZE, width, height),
         shadow_size=_CAPTION_SHADOW_SIZE,
     )
     caption_x, caption_y = scaled_position(CAPTION_CENTER, width, height)
-    events = []
+    events, used_impact_keywords = [], set()
     for start, end, text in cues:
         display_text = _strip_caption_fillers(text)
         if not display_text:
             continue
-        for event_start, event_end, line in _caption_display_events(start, end, display_text):
-            events.append("Dialogue: 0,{},{},Default,,0,0,0,,{{\\pos({},{})\\fs{}}}{}".format(
+        for event_start, event_end, line, is_impact in _impact_caption_display_events(
+                start, end, display_text, impact_keywords or [], used_impact_keywords):
+            style = "Impact" if is_impact else "Default"
+            ass_text = _escape_ass_text(line) if is_impact else _highlight_ass_text(line, keywords)
+            events.append("Dialogue: 0,{},{},{},,0,0,0,,{{\\pos({},{})\\fs{}}}{}".format(
                 event_start,
                 event_end,
+                style,
                 caption_x,
                 caption_y,
-                scaled_font_size(_caption_font_size(line), width, height),
-                _highlight_ass_text(line, keywords),
+                scaled_font_size(TITLE_FONT_SIZE if is_impact else _caption_font_size(line), width, height),
+                ass_text,
             ))
     ass_file.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
     return len(events)
 
 
-def _burn_srt_with_ffmpeg(video_path: str | Path, clip_srt: str, keywords: str | None = None) -> str:
+def _burn_srt_with_ffmpeg(
+        video_path: str | Path, clip_srt: str, keywords: str | None = None,
+        impact_keywords: list[str] | None = None) -> str:
     if not str(clip_srt or "").strip():
         raise RuntimeError("高光剪辑没有生成可烧录的字幕 SRT。")
     ffmpeg = shutil.which("ffmpeg")
@@ -687,7 +727,9 @@ def _burn_srt_with_ffmpeg(video_path: str | Path, clip_srt: str, keywords: str |
     subtitle_file = source.with_name("{}_captions.ass".format(source.stem))
     output = source.with_name("{}_captioned{}".format(source.stem, source.suffix))
     highlight_keywords = _parse_keywords(keywords)
-    cue_count = _write_ass_subtitles(clip_srt, subtitle_file, highlight_keywords, width, height)
+    cue_count = _write_ass_subtitles(
+        clip_srt, subtitle_file, highlight_keywords, width, height, impact_keywords=impact_keywords,
+    )
 
     color_filter = "eq=brightness={}:contrast={}:saturation={}".format(
         VIDEO_BRIGHTNESS,
@@ -744,6 +786,7 @@ def render_highlight_video(
         output_dir: str | Path = "",
         burn_subtitles: bool = True,
         keywords: str | None = None,
+        impact_keywords: list[str] | None = None,
         sound_bindings: str | None = None,
         visual_bindings: str | None = None,
         question: str | None = None,
@@ -770,7 +813,7 @@ def render_highlight_video(
         if source_caption_srt and not effective_srt.strip():
             logging.warning("语义字幕无法映射到剪辑时间轴，回退为上游剪辑字幕。")
             effective_srt = clip_srt
-        captioned_video = _burn_srt_with_ffmpeg(video, effective_srt, keywords)
+        captioned_video = _burn_srt_with_ffmpeg(video, effective_srt, keywords, impact_keywords)
         visual_video, visual_count = _overlay_visual_assets(captioned_video, effective_srt, visual_bindings)
         mixed_video, sound_count = _mix_sound_effects(visual_video, effective_srt, sound_bindings)
         layout_video = _burn_reference_layout(mixed_video, question, question_lines)
