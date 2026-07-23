@@ -42,9 +42,9 @@ _TIMESTAMP_RE = re.compile(r"^\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}$")
 SOUND_CUE_SYSTEM_PROMPT = """
 你是一名专业的短视频音效导演（Audio Director）。你的职责不是给关键词分类，而是根据一句字幕的完整语义，决定这一句是否需要音效、使用哪个音效、音效落在哪一个关键词上。医学科普视频必须自然、克制，不能滥用音效。
 
-输入包含 sound_effects_config 和 sentences。sound_effects_config 定义所有允许使用的音效，只能选择其中的 sound_id，绝不能创建新音效。sentences 的每条包含 sentence_id、text 和 keywords；keywords 只用于定位，判断必须依据整句语义。
+输入包含 sound_effects_config 和 sentences。sound_effects_config 定义所有允许使用的音效，只能选择其中的 sound_id，绝不能创建新音效。sentences 的每条包含 sentence_id、text 和 keywords；keywords 只用于定位，判断必须依据整句语义。这里的 keywords 已由视觉素材阶段预筛选：每一个关键词都已经绑定 GIF/PNG，除此之外的字幕和关键词绝对不能添加音效。
 
-逐句处理，且每个 sentence_id 必须且只能输出一次，顺序与输入一致。每句最多一个音效、一个 target_word；target_word 必须完全来自该句的 keywords，不能修改或创造新词。若不适合音效，必须 use_sound=false，sound_id 和 target_word 为 null。宁可不用，也不要强行使用。
+逐句处理，且每个 sentence_id 必须且只能输出一次，顺序与输入一致。每句最多一个音效、一个 target_word；target_word 必须完全来自该句的 keywords，不能修改或创造新词。若不适合音效，必须 use_sound=false，sound_id 和 target_word 为 null。插图不等于必须有音效，宁可不用，也不要强行使用。
 
 优先考虑：危险行为（抽烟、喝酒、熬夜、自行停药）、医生最终结论（不能、必须、一定、千万不要、最好、建议）、关键数字（比例、剂量、频次、时长）、重要医学概念，以及答案揭晓或关键转折。普通连接词、口头禅、寒暄、重复表达和无传播价值的信息通常不用音效。必须结合整句理解，例如“糖尿病患者千万不要抽烟”应强调“抽烟”，而非“糖尿病”；“空腹血糖最好控制在7以下”可强调“7”。
 
@@ -179,10 +179,43 @@ def _highlight_sentences(highlight_srt: str, keywords_text: str) -> list[dict]:
     return sentences
 
 
+def _visual_bound_sentences(highlight_srt: str, keywords_text: str, visual_bindings: str | None) -> list[dict]:
+    """Expose only GIF/PNG-bound keywords as candidates for sound effects."""
+    if visual_bindings is None:
+        # Keep direct callers from older integrations working. The pipeline
+        # always supplies visual_bindings and therefore enforces the new rule.
+        return _highlight_sentences(highlight_srt, keywords_text)
+    try:
+        payload = json.loads(str(visual_bindings or "{}"))
+    except json.JSONDecodeError:
+        payload = {}
+    placements = payload.get("placements", []) if isinstance(payload, dict) else []
+    words_by_sentence: dict[int, list[str]] = {}
+    for placement in placements:
+        if not isinstance(placement, dict):
+            continue
+        sentence_id, target_word = placement.get("sentence_id"), placement.get("target_word")
+        if isinstance(sentence_id, str) and sentence_id.isdigit():
+            sentence_id = int(sentence_id)
+        if not isinstance(sentence_id, int) or not isinstance(target_word, str) or not target_word:
+            continue
+        words_by_sentence.setdefault(sentence_id, [])
+        if target_word not in words_by_sentence[sentence_id]:
+            words_by_sentence[sentence_id].append(target_word)
+
+    filtered = []
+    for sentence in _highlight_sentences(highlight_srt, keywords_text):
+        allowed_words = words_by_sentence.get(sentence["sentence_id"], [])
+        keywords = [word for word in sentence["keywords"] if word in allowed_words]
+        if keywords:
+            filtered.append({**sentence, "keywords": keywords})
+    return filtered
+
+
 def select_sound_cues(
         highlight_srt: str, keywords_text: str, api_key: str, model: str,
-        llm_call: Callable[[str, str, str, str, str], str]) -> str:
-    """Stage 4: let the LLM choose at most one sound cue per subtitle sentence."""
+        llm_call: Callable[[str, str, str, str, str], str], visual_bindings: str | None = None) -> str:
+    """Stage 4: choose sound cues only for keywords already bound to a visual asset."""
     with _LOCK:
         data = _load_data()
         overrides = data["effects"]
@@ -203,7 +236,7 @@ def select_sound_cues(
                     "recommended_max_per_30s": item.get("recommended_max_per_30s"),
                     "avoid_scenes": item.get("avoid_scenes", []),
                 })
-    sentences = _highlight_sentences(highlight_srt, keywords_text)
+    sentences = _visual_bound_sentences(highlight_srt, keywords_text, visual_bindings)
     if not effects or not api_key or not sentences:
         return '{"cues": []}'
     request = {

@@ -107,11 +107,10 @@ def _clip_section(index: int, clip: dict[str, Any], video_file: str | None) -> l
             if not isinstance(asset, dict):
                 continue
             lines.append(
-                "- 第 {} 条字幕：关键词“{}”绑定素材 `{}`，展示 {:.2f} 秒。理由：{}".format(
+                "- 第 {} 条字幕：关键词“{}”绑定素材 `{}`，从关键词出现展示至该条字幕结束。理由：{}".format(
                     _text(asset.get("sentence_id")) or "?",
                     _text(asset.get("target_word")) or "未提供关键词",
                     _text(asset.get("asset_id")) or "未提供素材",
-                    _duration(asset.get("duration_seconds")),
                     _text(asset.get("reason")) or "模型未返回理由。",
                 )
             )

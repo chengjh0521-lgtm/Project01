@@ -642,14 +642,8 @@ def _process_from_corrected_subtitles(
             highlight_srt, keyword_count,
             lambda system, user: _call_deepseek(system, user, "", api_key, selected_model, "keyword stage"),
         )
-        sound_bindings = select_sound_cues(
-            highlight_srt, keywords, api_key, selected_model,
-            lambda system, user, content, key, chosen_model: _call_deepseek(
-                system, user, content, key, chosen_model, "sound-effect stage", json_response=True
-            ),
-        )
         if status_callback:
-            status_callback("阶段 5/5：正在为第 {} / {} 条素材选择 GIF/PNG。".format(index, len(candidates)))
+            status_callback("阶段 4/5：正在为第 {} / {} 条素材选择 GIF/PNG。".format(index, len(candidates)))
         try:
             visual_bindings = select_visual_assets(
                 highlight_srt, keywords, api_key, selected_model,
@@ -658,9 +652,18 @@ def _process_from_corrected_subtitles(
                 ),
             )
         except Exception as exc:
-            logging.exception("字幕处理阶段 5/5：视觉素材选择失败。")
+            logging.exception("字幕处理阶段 4/5：视觉素材选择失败。")
             visual_bindings = '{"placements": []}'
-            logging.warning("字幕处理阶段 5/5：忽略视觉素材选择错误：%s", exc)
+            logging.warning("字幕处理阶段 4/5：忽略视觉素材选择错误：%s", exc)
+        if status_callback:
+            status_callback("阶段 5/5：正在为已绑定 GIF/PNG 的关键词选择音效。")
+        sound_bindings = select_sound_cues(
+            highlight_srt, keywords, api_key, selected_model,
+            lambda system, user, content, key, chosen_model: _call_deepseek(
+                system, user, content, key, chosen_model, "sound-effect stage", json_response=True
+            ),
+            visual_bindings=visual_bindings,
+        )
         candidate.update({
             "highlight_srt": highlight_srt,
             "keywords": keywords,
