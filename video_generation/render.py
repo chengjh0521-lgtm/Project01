@@ -54,7 +54,7 @@ _HIGHLIGHT_RANGE_RE = re.compile(
 )
 _MAX_CAPTION_LINE_CHARACTERS = 15
 _CAPTION_SHADOW_SIZE = 4
-_IMPACT_CAPTION_FONT_SIZE = TITLE_FONT_SIZE + (TITLE_FONT_SIZE - CAPTION_FONT_SIZE)
+_IMPACT_CAPTION_FONT_SIZE = 150
 _CAPTION_CONNECTORS = ("但是", "所以", "因为", "如果", "而且", "或者", "并且", "然后", "以及", "同时", "不过", "而是", "还是")
 _CAPTION_PUNCTUATION = "，。！？；：、,.!?;:"
 
