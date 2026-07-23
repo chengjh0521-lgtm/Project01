@@ -74,7 +74,7 @@ class CaptionWrappingTests(unittest.TestCase):
             _write_ass_subtitles(srt, ass_path, ["糖尿病"], impact_keywords=["糖尿病"])
             rendered = ass_path.read_text(encoding="utf-8")
 
-        self.assertIn("Style: Impact,STHeiti,110,", rendered)
+        self.assertIn("Style: Impact,STHeiti,134,", rendered)
         self.assertEqual(rendered.count(",Impact,,0,0,0,,"), 1)
         self.assertIn("糖前期就会发展成", rendered)
         self.assertIn("糖尿病需要长期管理", rendered)

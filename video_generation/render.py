@@ -54,6 +54,7 @@ _HIGHLIGHT_RANGE_RE = re.compile(
 )
 _MAX_CAPTION_LINE_CHARACTERS = 15
 _CAPTION_SHADOW_SIZE = 4
+_IMPACT_CAPTION_FONT_SIZE = TITLE_FONT_SIZE + (TITLE_FONT_SIZE - CAPTION_FONT_SIZE)
 _CAPTION_CONNECTORS = ("但是", "所以", "因为", "如果", "而且", "或者", "并且", "然后", "以及", "同时", "不过", "而是", "还是")
 _CAPTION_PUNCTUATION = "，。！？；：、,.!?;:"
 
@@ -687,7 +688,7 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
         height=height,
         font_family=unified_font_family(),
         font_size=scaled_font_size(CAPTION_FONT_SIZE, width, height),
-        impact_font_size=scaled_font_size(TITLE_FONT_SIZE, width, height),
+        impact_font_size=scaled_font_size(_IMPACT_CAPTION_FONT_SIZE, width, height),
         shadow_size=_CAPTION_SHADOW_SIZE,
     )
     caption_x, caption_y = scaled_position(CAPTION_CENTER, width, height)
@@ -706,7 +707,7 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
                 style,
                 caption_x,
                 caption_y,
-                scaled_font_size(TITLE_FONT_SIZE if is_impact else _caption_font_size(line), width, height),
+                scaled_font_size(_IMPACT_CAPTION_FONT_SIZE if is_impact else _caption_font_size(line), width, height),
                 ass_text,
             ))
     ass_file.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
