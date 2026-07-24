@@ -8,8 +8,39 @@ from .question_intro import concat_video_segments, create_question_intro, create
 from .render import render_highlight_video
 
 
+DOCTOR_ANSWER_DUPLICATE_WINDOW_MS = 10_000
+_CONCAT_RANGE_PADDING_MS = 100
+
+
 def _ranges_as_llm_result(ranges) -> str:
     return "\n".join("[{}-{}]".format(start, end) for start, end in (ranges or []))
+
+
+def _timestamp_ms(value: str) -> int:
+    hours, minutes, seconds = str(value).replace(".", ",").split(":")
+    second, millis = seconds.split(",")
+    return (
+        int(hours) * 3_600_000
+        + int(minutes) * 60_000
+        + int(second) * 1_000
+        + int(millis.ljust(3, "0")[:3])
+    )
+
+
+def _doctor_answer_is_in_main_opening(answer_ranges, highlight_ranges) -> bool:
+    """Avoid repeating the answer when it already opens the main highlight."""
+    clip_offset = 0
+    for highlight_start, highlight_end in highlight_ranges or []:
+        start_ms, end_ms = _timestamp_ms(highlight_start), _timestamp_ms(highlight_end)
+        for answer_start, answer_end in answer_ranges or []:
+            answer_start_ms, answer_end_ms = _timestamp_ms(answer_start), _timestamp_ms(answer_end)
+            if answer_end_ms <= start_ms or answer_start_ms >= end_ms:
+                continue
+            answer_offset = clip_offset + max(start_ms, answer_start_ms) - start_ms
+            if answer_offset <= DOCTOR_ANSWER_DUPLICATE_WINDOW_MS:
+                return True
+        clip_offset += end_ms - start_ms + _CONCAT_RANGE_PADDING_MS
+    return False
 
 
 def render_four_part_highlight(clip: dict, video_state):
@@ -38,18 +69,6 @@ def render_four_part_highlight(clip: dict, video_state):
     # Part 3 is deliberately rendered from unmodified SRT cues selected by
     # the highlighter. It is not semantic-captioned or summarized again.
     answer_ranges = clip.get("doctor_answer_ranges") or list(clip.get("ranges") or [])[:1]
-    answer_srt = clip.get("doctor_answer_srt") or clip.get("highlight_srt")
-    answer_video, _, answer_message, _ = render_highlight_video(
-        _ranges_as_llm_result(answer_ranges),
-        video_state,
-        caption_srt=answer_srt,
-        question=question,
-        question_lines=question_lines,
-        prepend_question=False,
-    )
-    if not answer_video:
-        raise RuntimeError("医生原话回答片段没有成功生成。")
-
     main_path = Path(main_video)
     cover_video = create_title_cover_frame(
         question,
@@ -61,8 +80,24 @@ def render_four_part_highlight(clip: dict, video_state):
         question_lines=question_lines,
         output_path=main_path.with_name("{}_question_intro.mp4".format(main_path.stem)),
     )
+    sections = [cover_video, intro_video]
+    answer_message = "skipped because the doctor answer starts within the first 10 seconds of the main highlight"
+    if not _doctor_answer_is_in_main_opening(answer_ranges, clip.get("ranges")):
+        answer_srt = clip.get("doctor_answer_srt") or clip.get("highlight_srt")
+        answer_video, _, answer_message, _ = render_highlight_video(
+            _ranges_as_llm_result(answer_ranges),
+            video_state,
+            caption_srt=answer_srt,
+            question=question,
+            question_lines=question_lines,
+            prepend_question=False,
+        )
+        if not answer_video:
+            raise RuntimeError("医生原话回答片段没有成功生成。")
+        sections.append(answer_video)
+    sections.append(main_video)
     final_video = concat_video_segments(
-        [cover_video, intro_video, answer_video, main_video],
+        sections,
         main_path.with_name("{}_four_part.mp4".format(main_path.stem)),
     )
     message = "{}; four-part sequence=True (cover, question intro, doctor answer, main highlight); doctor answer: {}".format(

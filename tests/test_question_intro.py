@@ -6,6 +6,7 @@ from unittest.mock import patch
 from video_generation.question_intro import (
     MAX_QUESTION_INTRO_SECONDS,
     QUESTION_TEXT_ASS_COLOR,
+    _question_voice_text,
     _wrap_question_text,
     _write_question_ass,
     create_title_cover_frame,
@@ -35,6 +36,12 @@ class QuestionIntroTests(unittest.TestCase):
             ass = ass_path.read_text(encoding="utf-8")
 
         self.assertIn("糖尿病患者\\N能不能喝酒？", ass)
+
+    def test_question_voice_pauses_at_the_two_line_break(self):
+        self.assertEqual(
+            _question_voice_text("糖尿病能喝酒吗？", ["糖尿病能", "喝酒吗？"]),
+            "糖尿病能，喝酒吗？",
+        )
 
     def test_question_text_is_double_sized_and_starts_at_half_height(self):
         with tempfile.TemporaryDirectory() as temporary:

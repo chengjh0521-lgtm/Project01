@@ -78,6 +78,14 @@ def _display_question_text(question: str, question_lines: list[str] | None = Non
     return _wrap_question_text(question)
 
 
+def _question_voice_text(question: str, question_lines: list[str] | None = None) -> str:
+    """Speak the approved two-line title with a pause at the visual break."""
+    lines = ["".join(str(line or "").split()) for line in (question_lines or [])]
+    if len(lines) == 2 and all(lines):
+        return "{}，{}".format(lines[0], lines[1])
+    return "".join(str(question or "").split())
+
+
 def _write_question_ass(
         question: str, ass_path: Path, width: int, height: int,
         question_lines: list[str] | None = None) -> None:
@@ -194,10 +202,11 @@ def create_question_intro(
     subtitle_path = destination.with_suffix(".ass")
     _write_question_ass(text, subtitle_path, width, height, question_lines)
 
-    _synthesize_question_audio(text, audio_path, voice, DEFAULT_TTS_RATE)
+    voice_text = _question_voice_text(text, question_lines)
+    _synthesize_question_audio(voice_text, audio_path, voice, DEFAULT_TTS_RATE)
     duration = _audio_duration_seconds(audio_path)
     if duration > MAX_QUESTION_INTRO_SECONDS:
-        _synthesize_question_audio(text, audio_path, voice, FAST_TTS_RATE)
+        _synthesize_question_audio(voice_text, audio_path, voice, FAST_TTS_RATE)
         duration = _audio_duration_seconds(audio_path)
     if duration > MAX_QUESTION_INTRO_SECONDS:
         raise ValueError(

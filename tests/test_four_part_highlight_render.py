@@ -12,8 +12,8 @@ class FourPartHighlightRenderTests(unittest.TestCase):
             "question": "糖尿病能喝酒吗？",
             "question_lines": ["糖尿病能", "喝酒吗？"],
             "ranges": [("00:00:01,000", "00:00:42,000")],
-            "doctor_answer_ranges": [("00:00:10,000", "00:00:12,000")],
-            "doctor_answer_srt": "1\n00:00:10,000 --> 00:00:12,000\n不建议喝酒\n",
+            "doctor_answer_ranges": [("00:00:20,000", "00:00:22,000")],
+            "doctor_answer_srt": "1\n00:00:20,000 --> 00:00:22,000\n不建议喝酒\n",
             "highlight_srt": "1\n00:00:01,000 --> 00:00:42,000\n高光内容\n",
             "keywords": "喝酒",
             "impact_keywords": [],
@@ -45,6 +45,29 @@ class FourPartHighlightRenderTests(unittest.TestCase):
             ["/tmp/cover.mp4", "/tmp/intro.mp4", "/tmp/answer.mp4", "/tmp/main.mp4"],
             Path("/tmp/main_four_part.mp4"),
         )
+
+    def test_skips_answer_section_when_it_is_already_in_the_main_opening(self):
+        clip = {
+            "question": "糖尿病能喝酒吗？",
+            "question_lines": ["糖尿病能", "喝酒吗？"],
+            "ranges": [("00:00:01,000", "00:00:42,000")],
+            "doctor_answer_ranges": [("00:00:08,000", "00:00:10,000")],
+            "highlight_srt": "1\n00:00:01,000 --> 00:00:42,000\n高光内容\n",
+            "keywords": "喝酒",
+            "impact_keywords": [],
+            "sound_bindings": "{}",
+            "visual_bindings": "{}",
+        }
+        with patch("video_generation.four_part.render_highlight_video", return_value=("/tmp/main.mp4", None, "main", "main srt")) as render, patch(
+            "video_generation.four_part.create_title_cover_frame", return_value="/tmp/cover.mp4"
+        ), patch("video_generation.four_part.create_question_intro", return_value="/tmp/intro.mp4"), patch(
+            "video_generation.four_part.concat_video_segments", return_value="/tmp/final.mp4"
+        ) as concat:
+            _, message, _ = render_four_part_highlight(clip, {"video": "state"})
+
+        self.assertEqual(render.call_count, 1)
+        self.assertIn("skipped", message)
+        self.assertEqual(concat.call_args.args[0], ["/tmp/cover.mp4", "/tmp/intro.mp4", "/tmp/main.mp4"])
 
 
 if __name__ == "__main__":
