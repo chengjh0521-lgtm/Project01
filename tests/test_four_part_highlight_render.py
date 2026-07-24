@@ -36,7 +36,9 @@ class FourPartHighlightRenderTests(unittest.TestCase):
         self.assertIn("four-part sequence=True", message)
         self.assertEqual(render.call_count, 2)
         self.assertFalse(render.call_args_list[0].kwargs["prepend_question"])
-        self.assertFalse(render.call_args_list[1].kwargs["include_reference_layout"])
+        self.assertEqual(render.call_args_list[1].kwargs["question"], "糖尿病能喝酒吗？")
+        self.assertEqual(render.call_args_list[1].kwargs["question_lines"], ["糖尿病能", "喝酒吗？"])
+        self.assertFalse(render.call_args_list[1].kwargs["prepend_question"])
         cover.assert_called_once()
         intro.assert_called_once()
         concat.assert_called_once_with(

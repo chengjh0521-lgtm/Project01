@@ -43,7 +43,8 @@ def render_four_part_highlight(clip: dict, video_state):
         _ranges_as_llm_result(answer_ranges),
         video_state,
         caption_srt=answer_srt,
-        include_reference_layout=False,
+        question=question,
+        question_lines=question_lines,
         prepend_question=False,
     )
     if not answer_video:
