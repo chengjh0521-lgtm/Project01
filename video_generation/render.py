@@ -274,7 +274,7 @@ def _visual_position(position: str) -> tuple[str, str]:
         "middle_right": ("W-w-36", "H*0.40-h/2"),
         # Caption centre is y=1250 on the 1920px reference canvas. Start the
         # asset below it and keep clear of the left doctor-label strip.
-        "caption_lower_left": ("W*0.22", "H*0.70"),
+        "caption_lower_left": ("W*0.22", "H*0.804166667"),
     }
     return positions.get(position, positions["caption_lower_left"])
 
