@@ -9,13 +9,13 @@ REFERENCE_HEIGHT = 1920
 # The approved reference uses a translucent title band occupying the upper
 # portion of the portrait canvas. Keep these values in the 1080x1920 design
 # space and scale them only at render time.
-TITLE_BACKGROUND_TOP = 160
+TITLE_BACKGROUND_TOP = 1000
 TITLE_BACKGROUND_HEIGHT = 248
 # The cover uses the same visual treatment, but its title is much larger and
 # always spans two lines, so it needs a taller band.
 COVER_TITLE_BACKGROUND_HEIGHT = 500
 TITLE_BACKGROUND_COLOR = "white@0.56"
-TITLE_BACKGROUND_BORDER_COLOR = "black@0.22"
+TITLE_BACKGROUND_BORDER_COLOR = "black@0.24"
 
 TITLE_LINE_ONE = (540, 222)
 TITLE_LINE_TWO = (540, 322)
