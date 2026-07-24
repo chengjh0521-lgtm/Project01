@@ -8,6 +8,7 @@ import json
 import logging
 import time
 import http.client
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib.error
 import urllib.request
 
@@ -33,6 +34,7 @@ DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 CORRECTION_BATCH_SIZE = 30
 CORRECTION_CONTEXT_SIZE = 15
 DEEPSEEK_TIMEOUT_SECONDS = 180
+DEFAULT_HIGHLIGHT_POST_PROCESS_WORKERS = 8
 DEEPSEEK_MAX_RETRIES = 6
 
 CORRECTION_SYSTEM_PROMPT = """
@@ -633,10 +635,30 @@ def _process_from_corrected_subtitles(
     )
     if not candidates:
         raise SubtitlePipelineError("未提取到满足重合度限制的高光素材。")
-    for index, candidate in enumerate(candidates, start=1):
+    try:
+        configured_workers = int(os.environ.get(
+            "FUNCLIP_HIGHLIGHT_POST_WORKERS", DEFAULT_HIGHLIGHT_POST_PROCESS_WORKERS
+        ))
+    except ValueError:
+        configured_workers = DEFAULT_HIGHLIGHT_POST_PROCESS_WORKERS
+    worker_count = max(1, min(len(candidates), max(1, configured_workers)))
+
+    if status_callback:
+        status_callback(
+            "阶段 3-5/5：高光提取完成，正在并行处理 {} 条素材（最多 {} 路）。".format(
+                len(candidates), worker_count
+            )
+        )
+
+    def process_candidate(index: int, candidate: dict) -> dict:
+        candidate_status = None
+        if status_callback:
+            candidate_status = lambda message: status_callback(
+                "素材 {}/{}：{}".format(index, len(candidates), message)
+            )
         highlight_srt = build_highlight_srt(corrected_srt, candidate["ranges"])
         highlight_srt = build_semantic_highlight_srt(
-            highlight_srt, api_key, selected_model, status_callback
+            highlight_srt, api_key, selected_model, candidate_status
         )
         keyword_result = select_keywords_for_clip(
             highlight_srt, keyword_count,
@@ -653,8 +675,8 @@ def _process_from_corrected_subtitles(
             for item in keyword_reasons
             if isinstance(item, dict) and item.get("impact") and str(item.get("word") or "")
         ][:2]
-        if status_callback:
-            status_callback("阶段 4/5：正在为第 {} / {} 条素材选择 GIF/PNG。".format(index, len(candidates)))
+        if candidate_status:
+            candidate_status("阶段 4/5：正在选择 GIF/PNG。")
         try:
             visual_bindings = select_visual_assets(
                 highlight_srt, keywords, api_key, selected_model,
@@ -665,9 +687,9 @@ def _process_from_corrected_subtitles(
         except Exception as exc:
             logging.exception("字幕处理阶段 4/5：视觉素材选择失败。")
             visual_bindings = '{"placements": []}'
-            logging.warning("字幕处理阶段 4/5：忽略视觉素材选择错误：%s", exc)
-        if status_callback:
-            status_callback("阶段 5/5：正在为已绑定 GIF/PNG 的关键词选择音效。")
+            logging.warning("字幕处理阶段 4/5：素材 %d 忽略视觉素材选择错误：%s", index, exc)
+        if candidate_status:
+            candidate_status("阶段 5/5：正在为已绑定 GIF/PNG 的关键词选择音效。")
         sound_bindings = select_sound_cues(
             highlight_srt, keywords, api_key, selected_model,
             lambda system, user, content, key, chosen_model: _call_deepseek(
@@ -675,16 +697,31 @@ def _process_from_corrected_subtitles(
             ),
             visual_bindings=visual_bindings,
         )
-        candidate.update({
+        return {
             "highlight_srt": highlight_srt,
             "keywords": keywords,
             "keyword_reasons": keyword_reasons,
             "impact_keywords": impact_keywords,
             "sound_bindings": sound_bindings,
             "visual_bindings": visual_bindings,
-        })
-        if status_callback:
-            status_callback("阶段 3-5/5：已完成第 {} / {} 条素材的关键词、音效与 GIF/PNG 选择。".format(index, len(candidates)))
+        }
+
+    completed_count = 0
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="highlight-post") as executor:
+        futures = {
+            executor.submit(process_candidate, index, candidate): (index, candidate)
+            for index, candidate in enumerate(candidates, start=1)
+        }
+        for future in as_completed(futures):
+            index, candidate = futures[future]
+            candidate.update(future.result())
+            completed_count += 1
+            if status_callback:
+                status_callback(
+                    "阶段 3-5/5：已完成 {}/{} 条素材的关键词、GIF/PNG 与关联音效选择。".format(
+                        completed_count, len(candidates)
+                    )
+                )
     display = "\n\n".join(
         "素材 {}\n可回答的问题：{}\n\n高光时间戳：\n{}\n\n字幕3：\n{}\n\n选择理由：{}".format(
             index,
