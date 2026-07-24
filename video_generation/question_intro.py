@@ -12,6 +12,7 @@ from pathlib import Path
 
 from video_generation.font_config import subtitle_fonts_directory, unified_font_family
 from video_generation.reference_layout import (
+    COVER_TITLE_BACKGROUND_HEIGHT,
     REFERENCE_HEIGHT,
     TITLE_BACKGROUND_BORDER_COLOR,
     TITLE_BACKGROUND_COLOR,
@@ -22,7 +23,6 @@ from video_generation.reference_layout import (
 
 DEFAULT_QUESTION_BACKGROUND = Path(__file__).with_name("question_intro_background.png")
 DEFAULT_COVER_BACKGROUND = Path(__file__).with_name("cover_background.png")
-DEFAULT_TITLE_BACKGROUND = Path(__file__).with_name("title_background.png")
 DEFAULT_TTS_VOICE = "zh-CN-YunxiNeural"
 DEFAULT_TTS_RATE = "+35%"
 FAST_TTS_RATE = "+60%"
@@ -45,12 +45,6 @@ def cover_background_path() -> Path:
     """Return the reserved cover image path without requiring it to exist yet."""
     configured = os.environ.get("FUNCLIP_COVER_BACKGROUND")
     return Path(configured).expanduser() if configured else DEFAULT_COVER_BACKGROUND
-
-
-def title_background_path() -> Path:
-    """Return the optional PNG shared by the cover and reference title band."""
-    configured = os.environ.get("FUNCLIP_TITLE_BACKGROUND")
-    return Path(configured).expanduser() if configured else DEFAULT_TITLE_BACKGROUND
 
 
 def _escape_filter_path(path: Path) -> str:
@@ -304,46 +298,34 @@ def create_title_cover_frame(
         subtitle_filter += ":fontsdir={}".format(_escape_filter_path(font_dir))
     base_filter = (
         "scale={}:{}:force_original_aspect_ratio=decrease,"
-        "pad={}:{}:(ow-iw)/2:(oh-ih):color=0xf3f3f3,format=rgba"
+        "pad={}:{}:(ow-iw)/2:(oh-ih):color=0xf3f3f3,format=yuv420p"
     ).format(width, height, width, height)
     if background.is_file():
         inputs = ["-loop", "1", "-framerate", "30", "-i", str(background.resolve())]
     else:
         logging.warning("Cover background is not installed yet; using a neutral placeholder: %s", background)
         inputs = ["-f", "lavfi", "-i", "color=c=0xf3f3f3:s={}x{}:r=30".format(width, height)]
-    title_background = title_background_path().expanduser().resolve()
-    command = [ffmpeg, "-y", *inputs]
-    if title_background.is_file():
-        command.extend(["-loop", "1", "-framerate", "30", "-i", str(title_background)])
-    command.extend(["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"])
-    if title_background.is_file():
-        background_filter = (
-            "[1:v]scale={}:{}:force_original_aspect_ratio=decrease,"
-            "pad={}:{}:(ow-iw)/2:(oh-ih):color=black@0,format=rgba[title_bg];"
-            "[0:v]{}[cover];[cover][title_bg]overlay=0:0:format=auto,format=yuv420p[cover_with_title];"
-            "[cover_with_title]{}[outv]"
-        ).format(width, height, width, height, base_filter, subtitle_filter)
-        command.extend(["-filter_complex", background_filter, "-map", "[outv]", "-map", "2:a:0"])
-    else:
-        title_band_top = round(TITLE_BACKGROUND_TOP * height / REFERENCE_HEIGHT)
-        title_band_height = round(TITLE_BACKGROUND_HEIGHT * height / REFERENCE_HEIGHT)
-        fallback_title_background = (
-            "drawbox=x=0:y={}:w=iw:h={}:color={}:t=fill,"
-            "drawbox=x=0:y={}:w=iw:h=1:color={}:t=fill,"
-            "drawbox=x=0:y={}:w=iw:h=1:color={}:t=fill"
-        ).format(
-            title_band_top,
-            title_band_height,
-            TITLE_BACKGROUND_COLOR,
-            title_band_top,
-            TITLE_BACKGROUND_BORDER_COLOR,
-            title_band_top + title_band_height - 1,
-            TITLE_BACKGROUND_BORDER_COLOR,
-        )
-        command.extend([
-            "-filter:v", "{},{},{}".format(base_filter, fallback_title_background, subtitle_filter),
-            "-map", "0:v:0", "-map", "1:a:0",
-        ])
+    title_band_top = round(TITLE_BACKGROUND_TOP * height / REFERENCE_HEIGHT)
+    title_band_height = round(COVER_TITLE_BACKGROUND_HEIGHT * height / REFERENCE_HEIGHT)
+    title_background_filter = (
+        "drawbox=x=0:y={}:w=iw:h={}:color={}:t=fill,"
+        "drawbox=x=0:y={}:w=iw:h=1:color={}:t=fill,"
+        "drawbox=x=0:y={}:w=iw:h=1:color={}:t=fill"
+    ).format(
+        title_band_top,
+        title_band_height,
+        TITLE_BACKGROUND_COLOR,
+        title_band_top,
+        TITLE_BACKGROUND_BORDER_COLOR,
+        title_band_top + title_band_height - 1,
+        TITLE_BACKGROUND_BORDER_COLOR,
+    )
+    command = [
+        ffmpeg, "-y", *inputs,
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+        "-filter:v", "{},{},{}".format(base_filter, title_background_filter, subtitle_filter),
+        "-map", "0:v:0", "-map", "1:a:0",
+    ]
     command.extend([
         "-frames:v", "1", "-t", "{:.6f}".format(COVER_FRAME_SECONDS), "-r", "30",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",

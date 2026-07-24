@@ -124,28 +124,7 @@ class QuestionIntroTests(unittest.TestCase):
         self.assertIn("anullsrc=channel_layout=stereo:sample_rate=48000", command)
         self.assertIn("subtitles=filename=", command[command.index("-filter:v") + 1])
         self.assertIn("drawbox=", command[command.index("-filter:v") + 1])
-
-    def test_cover_overlays_the_installed_title_background_png(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            title_background = root / "title_background.png"
-            output = root / "cover.mp4"
-            title_background.write_bytes(b"png")
-
-            def render(command, **_kwargs):
-                Path(command[-1]).write_bytes(b"video")
-                return type("Completed", (), {"returncode": 0, "stderr": ""})()
-
-            with patch("video_generation.question_intro.title_background_path", return_value=title_background), patch(
-                "video_generation.question_intro.shutil.which", return_value="ffmpeg"
-            ), patch("video_generation.question_intro.subprocess.run", side_effect=render) as run:
-                create_title_cover_frame("糖尿病能喝酒吗？", output_path=output)
-
-        command = run.call_args.args[0]
-        self.assertIn(str(title_background.resolve()), command)
-        self.assertIn("-filter_complex", command)
-        self.assertIn("overlay=0:0", command[command.index("-filter_complex") + 1])
-        self.assertEqual(command[command.index("-map", command.index("-filter_complex")) + 1], "[outv]")
+        self.assertIn("h=500", command[command.index("-filter:v") + 1])
 
     def test_prepends_the_intro_before_the_main_video(self):
         with tempfile.TemporaryDirectory() as temporary:
