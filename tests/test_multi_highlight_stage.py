@@ -18,6 +18,7 @@ class MultiHighlightStageTests(unittest.TestCase):
         response = (
             '{"question_lines":["糖尿病能","喝酒吗？"],'
             '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],'
+            '"doctor_answer_ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],'
             '"reason":"Clear recommendation."}'
         )
         self.assertEqual(
@@ -26,6 +27,7 @@ class MultiHighlightStageTests(unittest.TestCase):
                 "question": "糖尿病能喝酒吗？",
                 "question_lines": ["糖尿病能", "喝酒吗？"],
                 "ranges": [("00:00:01,000", "00:00:42,000")],
+                "doctor_answer_ranges": [("00:00:01,000", "00:00:42,000")],
                 "reason": "Clear recommendation.",
             },
         )
@@ -34,7 +36,8 @@ class MultiHighlightStageTests(unittest.TestCase):
         responses = iter([
             "I cannot choose a clip.",
             '{"question_lines":["糖尿病能","喝酒吗？"],'
-            '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Clear answer."}',
+            '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],'
+            '"doctor_answer_ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Clear answer."}',
         ])
 
         selected = select_multiple("1\n00:00:01,000 --> 00:00:42,000\ntext\n", 1, lambda *_: next(responses))
@@ -47,7 +50,8 @@ class MultiHighlightStageTests(unittest.TestCase):
         responses = iter([
             '{"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}]}',
             '{"question_lines":["患者应该","怎么做？"],'
-            '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Clear answer."}',
+            '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],'
+            '"doctor_answer_ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Clear answer."}',
         ])
 
         selected = select_multiple("1\n00:00:01,000 --> 00:00:42,000\ntext\n", 1, lambda *_: next(responses))
@@ -59,12 +63,27 @@ class MultiHighlightStageTests(unittest.TestCase):
             '{"question_lines":["糖尿病患者日常","生活中究竟能不","能适量喝酒呢？"],'
             '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Too long."}',
             '{"question_lines":["糖尿病能","喝酒吗？"],'
-            '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Short answer."}',
+            '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],'
+            '"doctor_answer_ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Short answer."}',
         ])
 
         selected = select_multiple("1\n00:00:01,000 --> 00:00:42,000\ntext\n", 1, lambda *_: next(responses))
 
         self.assertEqual(selected[0]["question"], "糖尿病能喝酒吗？")
+
+    def test_select_multiple_retries_when_doctor_answer_is_not_an_original_cue(self):
+        responses = iter([
+            '{"question_lines":["糖尿病能","喝酒吗？"],'
+            '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],'
+            '"doctor_answer_ranges":[{"start":"00:00:02,000","end":"00:00:10,000"}],"reason":"Bad cue."}',
+            '{"question_lines":["糖尿病能","喝酒吗？"],'
+            '"ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],'
+            '"doctor_answer_ranges":[{"start":"00:00:01,000","end":"00:00:42,000"}],"reason":"Original cue."}',
+        ])
+
+        selected = select_multiple("1\n00:00:01,000 --> 00:00:42,000\n医生原话\n", 1, lambda *_: next(responses))
+
+        self.assertEqual(selected[0]["doctor_answer_ranges"], [("00:00:01,000", "00:00:42,000")])
 
 
 if __name__ == "__main__":

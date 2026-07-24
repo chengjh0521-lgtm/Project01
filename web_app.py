@@ -75,6 +75,7 @@ from video_generation import (
     apply_doctor_label,
     describe_sound_effect_events,
     describe_visual_asset_events,
+    render_four_part_highlight,
     render_highlight_video,
     write_generation_report,
 )
@@ -518,18 +519,7 @@ def submit_render(llm_result, video_state, keywords, sound_bindings, library_vid
         if isinstance(llm_result, dict) and llm_result.get("clips"):
             videos, logic_files, render_messages = [], [], []
             for index, clip in enumerate(llm_result["clips"], start=1):
-                ranges = "\n".join("[{}-{}]".format(start, end) for start, end in clip["ranges"])
-                video, _, render_message, clip_srt = render_highlight_video(
-                    ranges,
-                    resolved_video_state,
-                    keywords=clip["keywords"],
-                    impact_keywords=clip.get("impact_keywords"),
-                    sound_bindings=clip["sound_bindings"],
-                    visual_bindings=clip.get("visual_bindings"),
-                    question=clip.get("question"),
-                    question_lines=clip.get("question_lines"),
-                    caption_srt=clip.get("highlight_srt"),
-                )
+                video, render_message, clip_srt = render_four_part_highlight(clip, resolved_video_state)
                 if video:
                     videos.append(video)
                     render_messages.append("素材{}：{}；输出={}".format(index, render_message, video))

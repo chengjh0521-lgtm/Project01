@@ -794,7 +794,10 @@ def render_highlight_video(
         question_lines: list[str] | None = None,
         caption_srt: str | None = None,
         start_offset_ms: int = 0,
-        end_offset_ms: int = 100):
+        end_offset_ms: int = 100,
+        include_reference_layout: bool = True,
+        include_doctor_label: bool = True,
+        prepend_question: bool = True):
     """Render LLM timestamp ranges. Returns video, audio, message, and clip SRT."""
     launch = get_launch()
     if burn_subtitles:
@@ -817,17 +820,26 @@ def render_highlight_video(
         captioned_video = _burn_srt_with_ffmpeg(video, effective_srt, keywords, impact_keywords)
         visual_video, visual_count = _overlay_visual_assets(captioned_video, effective_srt, visual_bindings)
         mixed_video, sound_count = _mix_sound_effects(visual_video, effective_srt, sound_bindings)
-        layout_video = _burn_reference_layout(mixed_video, question, question_lines)
-        # The expert label belongs to the main consultation footage only. Burn
-        # it before concatenation so the three-second question card stays clean.
-        labelled_main_video = apply_doctor_label(layout_video)
+        layout_video = (
+            _burn_reference_layout(mixed_video, question, question_lines)
+            if include_reference_layout
+            else mixed_video
+        )
+        # The expert label belongs to the doctor footage only. Keep it out of
+        # question and cover cards, which are concatenated by the caller.
+        labelled_main_video = apply_doctor_label(layout_video) if include_doctor_label else layout_video
         final_video = (
             prepend_question_intro(labelled_main_video, question, question_lines)
-            if str(question or "").strip()
+            if prepend_question and str(question or "").strip()
             else labelled_main_video
         )
-        return final_video, audio, "{}; burned subtitles via FFmpeg; reference layout=True; question intro={}; {} GIF/PNG assets overlaid; fixed doctor label=True; {} sound effects mixed".format(
-            message, bool(str(question or "").strip()), visual_count, sound_count
+        return final_video, audio, "{}; burned subtitles via FFmpeg; reference layout={}; question intro={}; {} GIF/PNG assets overlaid; fixed doctor label={}; {} sound effects mixed".format(
+            message,
+            include_reference_layout,
+            bool(prepend_question and str(question or "").strip()),
+            visual_count,
+            include_doctor_label,
+            sound_count,
         ), effective_srt
     return launch.AI_clip(
         llm_result, "", "", start_offset_ms, end_offset_ms,

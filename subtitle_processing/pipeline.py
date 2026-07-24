@@ -656,6 +656,11 @@ def _process_from_corrected_subtitles(
             candidate_status = lambda message: status_callback(
                 "素材 {}/{}：{}".format(index, len(candidates), message)
             )
+        # Preserve the selected original doctor answer before semantic caption
+        # splitting; it is rendered as part 3 of the final composition.
+        doctor_answer_srt = build_highlight_srt(
+            corrected_srt, candidate.get("doctor_answer_ranges") or candidate["ranges"][:1]
+        )
         highlight_srt = build_highlight_srt(corrected_srt, candidate["ranges"])
         highlight_srt = build_semantic_highlight_srt(
             highlight_srt, api_key, selected_model, candidate_status
@@ -698,6 +703,7 @@ def _process_from_corrected_subtitles(
             visual_bindings=visual_bindings,
         )
         return {
+            "doctor_answer_srt": doctor_answer_srt,
             "highlight_srt": highlight_srt,
             "keywords": keywords,
             "keyword_reasons": keyword_reasons,

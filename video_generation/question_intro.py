@@ -14,10 +14,12 @@ from video_generation.font_config import subtitle_fonts_directory, unified_font_
 
 
 DEFAULT_QUESTION_BACKGROUND = Path(__file__).with_name("question_intro_background.png")
+DEFAULT_COVER_BACKGROUND = Path(__file__).with_name("cover_background.png")
 DEFAULT_TTS_VOICE = "zh-CN-YunxiNeural"
 DEFAULT_TTS_RATE = "+35%"
 FAST_TTS_RATE = "+60%"
 MAX_QUESTION_INTRO_SECONDS = 3.0
+COVER_FRAME_SECONDS = 1 / 30
 # The intro question uses a deliberately large font. Seven Chinese characters
 # fit the approved layout; trailing punctuation is handled separately so it
 # cannot become an orphaned line on narrow portrait videos.
@@ -29,6 +31,12 @@ QUESTION_TEXT_ASS_COLOR = "&H0000FFFF"
 def question_intro_background_path() -> Path:
     configured = os.environ.get("FUNCLIP_QUESTION_INTRO_BACKGROUND")
     return Path(configured).expanduser() if configured else DEFAULT_QUESTION_BACKGROUND
+
+
+def cover_background_path() -> Path:
+    """Return the reserved cover image path without requiring it to exist yet."""
+    configured = os.environ.get("FUNCLIP_COVER_BACKGROUND")
+    return Path(configured).expanduser() if configured else DEFAULT_COVER_BACKGROUND
 
 
 def _escape_filter_path(path: Path) -> str:
@@ -228,6 +236,106 @@ def create_question_intro(
     return str(destination)
 
 
+def create_title_cover_frame(
+        question: str,
+        *,
+        question_lines: list[str] | None = None,
+        background_path: str | Path | None = None,
+        output_path: str | Path | None = None,
+        width: int = 1080,
+        height: int = 1920,
+) -> str:
+    """Create a one-frame silent title cover before the narrated question card.
+
+    ``video_generation/cover_background.png`` is intentionally the default
+    slot for the future cover artwork. Until that file is provided, a neutral
+    canvas keeps the four-part composition renderable.
+    """
+    text = "".join(str(question or "").split())
+    if not text:
+        raise ValueError("Cover title is required.")
+    if width < 2 or height < 2:
+        raise ValueError("Cover frame dimensions must be positive.")
+
+    background = Path(background_path).expanduser() if background_path else cover_background_path()
+    destination = Path(output_path).expanduser() if output_path else background.with_name("title_cover.mp4")
+    destination = destination.resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    subtitle_path = destination.with_suffix(".ass")
+    _write_question_ass(text, subtitle_path, width, height, question_lines)
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("FFmpeg is unavailable; cannot create a title cover.")
+    subtitle_filter = "subtitles=filename={}:charenc=UTF-8".format(_escape_filter_path(subtitle_path))
+    font_dir = subtitle_fonts_directory()
+    if font_dir:
+        subtitle_filter += ":fontsdir={}".format(_escape_filter_path(font_dir))
+    visual_filter = (
+        "scale={}:{}:force_original_aspect_ratio=decrease,"
+        "pad={}:{}:(ow-iw)/2:(oh-ih):color=0xf3f3f3,format=yuv420p,{}"
+    ).format(width, height, width, height, subtitle_filter)
+    if background.is_file():
+        inputs = ["-loop", "1", "-framerate", "30", "-i", str(background.resolve())]
+    else:
+        logging.warning("Cover background is not installed yet; using a neutral placeholder: %s", background)
+        inputs = ["-f", "lavfi", "-i", "color=c=0xf3f3f3:s={}x{}:r=30".format(width, height)]
+    command = [
+        ffmpeg, "-y", *inputs,
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+        "-filter:v", visual_filter, "-map", "0:v:0", "-map", "1:a:0",
+        "-frames:v", "1", "-t", "{:.6f}".format(COVER_FRAME_SECONDS), "-r", "30",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(destination),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
+    if completed.returncode:
+        raise RuntimeError("Title cover FFmpeg render failed: {}".format(completed.stderr[-1000:]))
+    if not destination.is_file() or destination.stat().st_size == 0:
+        raise RuntimeError("Title cover render produced no usable output: {}".format(destination))
+    logging.warning("Title cover frame completed: %s", destination)
+    return str(destination)
+
+
+def concat_video_segments(video_paths: list[str | Path], output_path: str | Path) -> str:
+    """Normalize and concatenate ordered H.264/AAC sections without SAR drift."""
+    sources = [Path(path).expanduser().resolve() for path in video_paths]
+    if len(sources) < 2:
+        raise ValueError("At least two video sections are required for concatenation.")
+    if any(not source.is_file() for source in sources):
+        missing = next(source for source in sources if not source.is_file())
+        raise FileNotFoundError("Video section is missing: {}".format(missing))
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("FFmpeg is unavailable; cannot concatenate video sections.")
+
+    width, height = _video_dimensions(sources[0])
+    destination = Path(output_path).expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    video_filter = "fps=30,scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih):color=black,format=yuv420p,setsar=1"
+    audio_filter = "aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo"
+    filters, concat_inputs = [], []
+    for index in range(len(sources)):
+        filters.append("[{}:v]{}[v{}]".format(index, video_filter.format(width, height, width, height), index))
+        filters.append("[{}:a]{}[a{}]".format(index, audio_filter, index))
+        concat_inputs.append("[v{}][a{}]".format(index, index))
+    filters.append("{}concat=n={}:v=1:a=1[outv][outa]".format("".join(concat_inputs), len(sources)))
+    command = [ffmpeg, "-y"]
+    for source in sources:
+        command.extend(["-i", str(source)])
+    command.extend([
+        "-filter_complex", ";".join(filters), "-map", "[outv]", "-map", "[outa]",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(destination),
+    ])
+    completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
+    if completed.returncode:
+        raise RuntimeError("Video section concat failed: {}".format(completed.stderr[-1000:]))
+    if not destination.is_file() or destination.stat().st_size == 0:
+        raise RuntimeError("Video section concat produced no usable output: {}".format(destination))
+    return str(destination)
+
+
 def prepend_question_intro(
         video_path: str | Path, question: str, question_lines: list[str] | None = None) -> str:
     """Create and prepend a narrated question card, keeping the main video's dimensions."""
@@ -242,30 +350,9 @@ def prepend_question_intro(
         width=width,
         height=height,
     )
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise RuntimeError("FFmpeg is unavailable; cannot prepend a question intro.")
     output = source.with_name("{}_with_question_intro{}".format(source.stem, source.suffix))
-    video_filter = "fps=30,scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih):color=black,format=yuv420p,setsar=1"
-    audio_filter = "aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo"
-    filter_graph = ";".join([
-        "[0:v]{}[intro_v]".format(video_filter.format(width, height, width, height)),
-        "[0:a]{}[intro_a]".format(audio_filter),
-        "[1:v]{}[main_v]".format(video_filter.format(width, height, width, height)),
-        "[1:a]{}[main_a]".format(audio_filter),
-        "[intro_v][intro_a][main_v][main_a]concat=n=2:v=1:a=1[outv][outa]",
-    ])
-    command = [
-        ffmpeg, "-y", "-i", str(intro), "-i", str(source), "-filter_complex", filter_graph,
-        "-map", "[outv]", "-map", "[outa]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
-    ]
     logging.warning("Prepending question intro: source=%s, question=%s, output=%s", source, question, output)
-    completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
-    if completed.returncode:
-        raise RuntimeError("Question intro concat failed: {}".format(completed.stderr[-1000:]))
-    if not output.is_file() or output.stat().st_size == 0:
-        raise RuntimeError("Question intro concat produced no usable output: {}".format(output))
+    concat_video_segments([intro, source], output)
     logging.warning("Question intro prepended: %s", output)
     return str(output)
 

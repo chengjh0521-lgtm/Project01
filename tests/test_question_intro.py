@@ -8,6 +8,7 @@ from video_generation.question_intro import (
     QUESTION_TEXT_ASS_COLOR,
     _wrap_question_text,
     _write_question_ass,
+    create_title_cover_frame,
     create_question_intro,
     prepend_question_intro,
 )
@@ -84,6 +85,30 @@ class QuestionIntroTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(ValueError, "above the 3.0s limit"):
                     create_question_intro("糖尿病能喝酒吗？", background_path=background)
+
+    def test_creates_one_frame_title_cover_with_yellow_question_text(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "cover.mp4"
+
+            def render(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"video")
+                class Completed:
+                    returncode = 0
+                    stderr = ""
+                return Completed()
+
+            with patch("video_generation.question_intro.shutil.which", return_value="ffmpeg"), patch(
+                "video_generation.question_intro.subprocess.run", side_effect=render
+            ) as run:
+                result = create_title_cover_frame("糖尿病能喝酒吗？", output_path=output)
+
+        command = run.call_args.args[0]
+        self.assertEqual(Path(result).name, "cover.mp4")
+        self.assertIn("-frames:v", command)
+        self.assertEqual(command[command.index("-frames:v") + 1], "1")
+        self.assertIn("anullsrc=channel_layout=stereo:sample_rate=48000", command)
+        self.assertIn("subtitles=filename=", command[command.index("-filter:v") + 1])
 
     def test_prepends_the_intro_before_the_main_video(self):
         with tempfile.TemporaryDirectory() as temporary:
