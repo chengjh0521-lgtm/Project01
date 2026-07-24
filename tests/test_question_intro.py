@@ -7,6 +7,7 @@ from video_generation.question_intro import (
     MAX_QUESTION_INTRO_SECONDS,
     QUESTION_TEXT_ASS_COLOR,
     _question_voice_text,
+    _question_ass_text,
     _wrap_question_text,
     _write_question_ass,
     create_title_cover_frame,
@@ -41,6 +42,12 @@ class QuestionIntroTests(unittest.TestCase):
         self.assertEqual(
             _question_voice_text("糖尿病能喝酒吗？", ["糖尿病能", "喝酒吗？"]),
             "糖尿病能，喝酒吗？",
+        )
+
+    def test_cover_title_uses_white_first_line_and_yellow_second_line(self):
+        self.assertEqual(
+            _question_ass_text("糖尿病能喝酒吗？", ["糖尿病能", "喝酒吗？"], True),
+            r"{\c&H00FFFFFF&}糖尿病能{\c&H0000FFFF&}\N喝酒吗？",
         )
 
     def test_question_text_is_double_sized_and_starts_at_half_height(self):
@@ -116,6 +123,29 @@ class QuestionIntroTests(unittest.TestCase):
         self.assertEqual(command[command.index("-frames:v") + 1], "1")
         self.assertIn("anullsrc=channel_layout=stereo:sample_rate=48000", command)
         self.assertIn("subtitles=filename=", command[command.index("-filter:v") + 1])
+        self.assertIn("drawbox=", command[command.index("-filter:v") + 1])
+
+    def test_cover_overlays_the_installed_title_background_png(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            title_background = root / "title_background.png"
+            output = root / "cover.mp4"
+            title_background.write_bytes(b"png")
+
+            def render(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"video")
+                return type("Completed", (), {"returncode": 0, "stderr": ""})()
+
+            with patch("video_generation.question_intro.title_background_path", return_value=title_background), patch(
+                "video_generation.question_intro.shutil.which", return_value="ffmpeg"
+            ), patch("video_generation.question_intro.subprocess.run", side_effect=render) as run:
+                create_title_cover_frame("糖尿病能喝酒吗？", output_path=output)
+
+        command = run.call_args.args[0]
+        self.assertIn(str(title_background.resolve()), command)
+        self.assertIn("-filter_complex", command)
+        self.assertIn("overlay=0:0", command[command.index("-filter_complex") + 1])
+        self.assertEqual(command[command.index("-map", command.index("-filter_complex")) + 1], "[outv]")
 
     def test_prepends_the_intro_before_the_main_video(self):
         with tempfile.TemporaryDirectory() as temporary:

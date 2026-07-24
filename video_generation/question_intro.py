@@ -11,10 +11,18 @@ import subprocess
 from pathlib import Path
 
 from video_generation.font_config import subtitle_fonts_directory, unified_font_family
+from video_generation.reference_layout import (
+    REFERENCE_HEIGHT,
+    TITLE_BACKGROUND_BORDER_COLOR,
+    TITLE_BACKGROUND_COLOR,
+    TITLE_BACKGROUND_HEIGHT,
+    TITLE_BACKGROUND_TOP,
+)
 
 
 DEFAULT_QUESTION_BACKGROUND = Path(__file__).with_name("question_intro_background.png")
 DEFAULT_COVER_BACKGROUND = Path(__file__).with_name("cover_background.png")
+DEFAULT_TITLE_BACKGROUND = Path(__file__).with_name("title_background.png")
 DEFAULT_TTS_VOICE = "zh-CN-YunxiNeural"
 DEFAULT_TTS_RATE = "+35%"
 FAST_TTS_RATE = "+60%"
@@ -37,6 +45,12 @@ def cover_background_path() -> Path:
     """Return the reserved cover image path without requiring it to exist yet."""
     configured = os.environ.get("FUNCLIP_COVER_BACKGROUND")
     return Path(configured).expanduser() if configured else DEFAULT_COVER_BACKGROUND
+
+
+def title_background_path() -> Path:
+    """Return the optional PNG shared by the cover and reference title band."""
+    configured = os.environ.get("FUNCLIP_TITLE_BACKGROUND")
+    return Path(configured).expanduser() if configured else DEFAULT_TITLE_BACKGROUND
 
 
 def _escape_filter_path(path: Path) -> str:
@@ -88,7 +102,7 @@ def _question_voice_text(question: str, question_lines: list[str] | None = None)
 
 def _write_question_ass(
         question: str, ass_path: Path, width: int, height: int,
-        question_lines: list[str] | None = None) -> None:
+        question_lines: list[str] | None = None, first_line_white: bool = False) -> None:
     base_font_size = max(44, min(80, round(min(width, height) * 0.07)))
     font_size = base_font_size * 2
     top_margin = round(height * 0.70)
@@ -112,9 +126,17 @@ Dialogue: 0,0:00:00.00,0:00:03.00,Question,,0,0,0,,{text}
         font_size=font_size,
         text_color=QUESTION_TEXT_ASS_COLOR,
         top_margin=top_margin,
-        text=_display_question_text(escaped, question_lines),
+        text=_question_ass_text(escaped, question_lines, first_line_white),
     )
     ass_path.write_text(header, encoding="utf-8")
+
+
+def _question_ass_text(question: str, question_lines: list[str] | None, first_line_white: bool) -> str:
+    text = _display_question_text(question, question_lines)
+    if not first_line_white or "\\N" not in text:
+        return text
+    first_line, second_line = text.split("\\N", 1)
+    return r"{\c&H00FFFFFF&}" + first_line + r"{\c&H0000FFFF&}\N" + second_line
 
 
 def _synthesize_question_audio(question: str, audio_path: Path, voice: str, rate: str) -> None:
@@ -271,7 +293,7 @@ def create_title_cover_frame(
     destination = destination.resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
     subtitle_path = destination.with_suffix(".ass")
-    _write_question_ass(text, subtitle_path, width, height, question_lines)
+    _write_question_ass(text, subtitle_path, width, height, question_lines, first_line_white=True)
 
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
@@ -280,23 +302,53 @@ def create_title_cover_frame(
     font_dir = subtitle_fonts_directory()
     if font_dir:
         subtitle_filter += ":fontsdir={}".format(_escape_filter_path(font_dir))
-    visual_filter = (
+    base_filter = (
         "scale={}:{}:force_original_aspect_ratio=decrease,"
-        "pad={}:{}:(ow-iw)/2:(oh-ih):color=0xf3f3f3,format=yuv420p,{}"
-    ).format(width, height, width, height, subtitle_filter)
+        "pad={}:{}:(ow-iw)/2:(oh-ih):color=0xf3f3f3,format=rgba"
+    ).format(width, height, width, height)
     if background.is_file():
         inputs = ["-loop", "1", "-framerate", "30", "-i", str(background.resolve())]
     else:
         logging.warning("Cover background is not installed yet; using a neutral placeholder: %s", background)
         inputs = ["-f", "lavfi", "-i", "color=c=0xf3f3f3:s={}x{}:r=30".format(width, height)]
-    command = [
-        ffmpeg, "-y", *inputs,
-        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-        "-filter:v", visual_filter, "-map", "0:v:0", "-map", "1:a:0",
+    title_background = title_background_path().expanduser().resolve()
+    command = [ffmpeg, "-y", *inputs]
+    if title_background.is_file():
+        command.extend(["-loop", "1", "-framerate", "30", "-i", str(title_background)])
+    command.extend(["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"])
+    if title_background.is_file():
+        background_filter = (
+            "[1:v]scale={}:{}:force_original_aspect_ratio=decrease,"
+            "pad={}:{}:(ow-iw)/2:(oh-ih):color=black@0,format=rgba[title_bg];"
+            "[0:v]{}[cover];[cover][title_bg]overlay=0:0:format=auto,format=yuv420p[cover_with_title];"
+            "[cover_with_title]{}[outv]"
+        ).format(width, height, width, height, base_filter, subtitle_filter)
+        command.extend(["-filter_complex", background_filter, "-map", "[outv]", "-map", "2:a:0"])
+    else:
+        title_band_top = round(TITLE_BACKGROUND_TOP * height / REFERENCE_HEIGHT)
+        title_band_height = round(TITLE_BACKGROUND_HEIGHT * height / REFERENCE_HEIGHT)
+        fallback_title_background = (
+            "drawbox=x=0:y={}:w=iw:h={}:color={}:t=fill,"
+            "drawbox=x=0:y={}:w=iw:h=1:color={}:t=fill,"
+            "drawbox=x=0:y={}:w=iw:h=1:color={}:t=fill"
+        ).format(
+            title_band_top,
+            title_band_height,
+            TITLE_BACKGROUND_COLOR,
+            title_band_top,
+            TITLE_BACKGROUND_BORDER_COLOR,
+            title_band_top + title_band_height - 1,
+            TITLE_BACKGROUND_BORDER_COLOR,
+        )
+        command.extend([
+            "-filter:v", "{},{},{}".format(base_filter, fallback_title_background, subtitle_filter),
+            "-map", "0:v:0", "-map", "1:a:0",
+        ])
+    command.extend([
         "-frames:v", "1", "-t", "{:.6f}".format(COVER_FRAME_SECONDS), "-r", "30",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(destination),
-    ]
+    ])
     completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
     if completed.returncode:
         raise RuntimeError("Title cover FFmpeg render failed: {}".format(completed.stderr[-1000:]))
