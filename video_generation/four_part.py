@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .question_intro import concat_video_segments, create_question_intro, create_title_cover_frame
+from .question_intro import concat_video_segments, create_question_intro
 from .render import render_highlight_video
 
 
@@ -44,7 +44,7 @@ def _doctor_answer_is_in_main_opening(answer_ranges, highlight_ranges) -> bool:
 
 
 def render_four_part_highlight(clip: dict, video_state):
-    """Render cover, unchanged question card, direct answer, then full highlight."""
+    """Render question card, optional doctor answer, then the main highlight."""
     ranges = _ranges_as_llm_result(clip.get("ranges"))
     question = str(clip.get("question") or "").strip()
     question_lines = clip.get("question_lines")
@@ -70,17 +70,12 @@ def render_four_part_highlight(clip: dict, video_state):
     # the highlighter. It is not semantic-captioned or summarized again.
     answer_ranges = clip.get("doctor_answer_ranges") or list(clip.get("ranges") or [])[:1]
     main_path = Path(main_video)
-    cover_video = create_title_cover_frame(
-        question,
-        question_lines=question_lines,
-        output_path=main_path.with_name("{}_title_cover.mp4".format(main_path.stem)),
-    )
     intro_video = create_question_intro(
         question,
         question_lines=question_lines,
         output_path=main_path.with_name("{}_question_intro.mp4".format(main_path.stem)),
     )
-    sections = [cover_video, intro_video]
+    sections = [intro_video]
     answer_message = "skipped because the doctor answer starts within the first 10 seconds of the main highlight"
     if not _doctor_answer_is_in_main_opening(answer_ranges, clip.get("ranges")):
         answer_srt = clip.get("doctor_answer_srt") or clip.get("highlight_srt")
@@ -100,7 +95,7 @@ def render_four_part_highlight(clip: dict, video_state):
         sections,
         main_path.with_name("{}_four_part.mp4".format(main_path.stem)),
     )
-    message = "{}; four-part sequence=True (cover, question intro, doctor answer, main highlight); doctor answer: {}".format(
+    message = "{}; three-part sequence=True (question intro, doctor answer, main highlight); doctor answer: {}".format(
         main_message, answer_message
     )
     return final_video, message, clip_srt
