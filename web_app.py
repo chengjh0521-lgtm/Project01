@@ -65,6 +65,7 @@ patch_gradio_boolean_schema()
 from subtitle_generation import generate_subtitles
 from subtitle_processing import process_from_corrected_subtitles, process_multiple_subtitles
 from subtitle_processing.pipeline import build_corrected_video_state
+from text_question_testing import run_text_question_test
 from subtitle_processing.sound_effect_binding import (
     get_effect_details,
     list_sound_effects,
@@ -85,6 +86,7 @@ SOUND_LOGIC_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "sound_eff
 RENDER_REPORT_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "generation_reports"
 SAVED_CORRECTED_SUBTITLE_DIR = Path(__file__).resolve().parent / "subtitle_processing" / "saved_corrected_subtitles"
 SAVED_HIGHLIGHT_DIR = Path(__file__).resolve().parent / "subtitle_processing" / "saved_highlights"
+TEXT_QUESTION_TEST_OUTPUT_DIR = Path(__file__).resolve().parent / "output" / "text_question_tests"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 VIDEO_SOURCE_CONTEXT_FILE = Path(__file__).resolve().parent / "subtitle_generation" / ".latest_video_source.json"
 _VIDEO_STATE_LOCK = threading.RLock()
@@ -254,6 +256,11 @@ def list_saved_corrected_subtitles():
 def refresh_saved_corrected_subtitles():
     choices = list_saved_corrected_subtitles()
     return gr.Dropdown(choices=choices, value=choices[0] if choices else None)
+
+
+def refresh_text_question_subtitles():
+    """Expose the same saved subtitle2 library to the independent text test module."""
+    return refresh_saved_corrected_subtitles()
 
 
 def _saved_corrected_subtitle_path(file_name):
@@ -593,6 +600,49 @@ def _video_paths_from_component(value):
     return paths
 
 
+def submit_text_question_test(saved_file, api_key):
+    """Run the isolated question-and-answer text test against saved subtitle2 only."""
+    try:
+        path = _saved_corrected_subtitle_path(saved_file)
+        srt_text = path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        return "文本测试任务未提交：{}".format(exc), "", None, "", None
+
+    key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+
+    def worker(report):
+        report_path, markdown = run_text_question_test(
+            srt_text=srt_text,
+            source_name=path.name,
+            api_key=key,
+            model=os.environ.get("FUNCLIP_LLM_MODEL", "deepseek-v4-flash"),
+            output_dir=TEXT_QUESTION_TEST_OUTPUT_DIR,
+            report=report,
+        )
+        return {"report": report_path, "preview": markdown}
+
+    job_id = JOBS.submit("text-question-test", worker)
+    return "文本测试已进入后台队列：{}".format(job_id[:8]), "", None, job_id, {"id": job_id}
+
+
+def poll_text_question_test(job_ref):
+    job_id = job_ref.get("id") if isinstance(job_ref, dict) else str(job_ref or "").strip()
+    if not job_id:
+        return gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
+    job = JOBS.get(job_id)
+    if job is None:
+        return "文本测试任务不存在，可能服务刚刚重启。", gr.skip(), gr.skip(), "", None
+
+    prefix = "文本测试任务："
+    if job["status"] in {"queued", "running"}:
+        return prefix + job["message"], gr.skip(), gr.skip(), job_id, job_ref
+    if job["status"] == "failed":
+        return prefix + "失败：{}".format(job["error"] or job["message"]), gr.skip(), gr.skip(), job_id, None
+
+    result = job["result"] or {}
+    return prefix + "完成。", result.get("preview", ""), result.get("report"), job_id, None
+
+
 def submit_doctor_label(rendered_videos):
     video_paths = _video_paths_from_component(rendered_videos)
     if not video_paths:
@@ -773,6 +823,20 @@ with gr.Blocks(title="FunClip 四模块", css=OUTPUT_VIDEO_CSS) as app:
             saved_corrected_refresh_button = gr.Button("刷新保存字幕")
             saved_corrected_continue_button = gr.Button("使用已保存字幕继续处理")
 
+    with gr.Accordion("字幕文本测试", open=False):
+        text_question_subtitle_input = gr.Dropdown(
+            label="选择已清洗字幕", choices=list_saved_corrected_subtitles()
+        )
+        with gr.Row():
+            text_question_refresh_button = gr.Button("刷新已保存字幕")
+            text_question_button = gr.Button("生成 10 个问题与回答", variant="primary")
+            text_question_resume_button = gr.Button("查询文本测试任务")
+        text_question_status = gr.Textbox(label="文本测试后台状态", interactive=False)
+        text_question_job_id = gr.Textbox(label="文本测试任务 ID（刷新后可粘贴查询）")
+        text_question_preview = gr.Textbox(label="问题与答案预览", lines=18, interactive=False)
+        text_question_report = gr.File(label="问题与答案报告（Markdown，可下载）")
+        text_question_state = gr.State()
+
     with gr.Accordion("服务器历史高光", open=False):
         saved_highlight_input = gr.Dropdown(
             label="服务器保存的高光计划", choices=list_saved_highlights()
@@ -812,6 +876,37 @@ with gr.Blocks(title="FunClip 四模块", css=OUTPUT_VIDEO_CSS) as app:
         outputs=task_outputs,
         show_progress="hidden",
         concurrency_limit=4,
+    )
+    text_question_refresh_button.click(
+        refresh_text_question_subtitles,
+        outputs=[text_question_subtitle_input],
+        show_progress="hidden",
+    )
+    text_question_button.click(
+        submit_text_question_test,
+        inputs=[text_question_subtitle_input, api_key_input],
+        outputs=[
+            text_question_status,
+            text_question_preview,
+            text_question_report,
+            text_question_job_id,
+            text_question_state,
+        ],
+        show_progress="hidden",
+        concurrency_limit=4,
+    )
+    text_question_resume_button.click(
+        poll_text_question_test,
+        inputs=[text_question_job_id],
+        outputs=[
+            text_question_status,
+            text_question_preview,
+            text_question_report,
+            text_question_job_id,
+            text_question_state,
+        ],
+        show_progress="hidden",
+        queue=False,
     )
     saved_highlight_refresh_button.click(
         refresh_saved_highlights,
@@ -872,12 +967,27 @@ with gr.Blocks(title="FunClip 四模块", css=OUTPUT_VIDEO_CSS) as app:
     )
     app.load(refresh_library_videos, outputs=[library_video_input])
     app.load(refresh_saved_corrected_subtitles, outputs=[saved_corrected_input])
+    app.load(refresh_text_question_subtitles, outputs=[text_question_subtitle_input])
     app.load(refresh_saved_highlights, outputs=[saved_highlight_input])
     job_timer = gr.Timer(value=2)
     job_timer.tick(
         poll_job,
         inputs=[job_state],
         outputs=task_outputs,
+        show_progress="hidden",
+        queue=False,
+    )
+    text_question_timer = gr.Timer(value=2)
+    text_question_timer.tick(
+        poll_text_question_test,
+        inputs=[text_question_state],
+        outputs=[
+            text_question_status,
+            text_question_preview,
+            text_question_report,
+            text_question_job_id,
+            text_question_state,
+        ],
         show_progress="hidden",
         queue=False,
     )
