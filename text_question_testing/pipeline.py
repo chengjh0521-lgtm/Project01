@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -21,8 +23,9 @@ from subtitle_processing.pipeline import (
 QUESTION_COUNT = 10
 MIN_ANSWER_DURATION_MS = 40_000
 MAX_ANSWER_DURATION_MS = 90_000
-MAX_ANSWER_ATTEMPTS = 3
-MAX_QUESTION_ATTEMPTS = 3
+MAX_ANSWER_ATTEMPTS = 2
+MAX_QUESTION_ATTEMPTS = 2
+DEFAULT_TEXT_ANSWER_WORKERS = 8
 
 QUESTION_SYSTEM_PROMPT = """
 你是一名医学科普短视频选题策划。输入是一份已经清洗完成的完整 SRT 字幕。
@@ -42,7 +45,9 @@ ANSWER_SYSTEM_PROMPT = """
 
 请只选择能够直接、完整回答该问题的字幕时间段，删除寒暄、重复、病史确认和无关内容。可选择多个不连续时间段，但所有时间段时长相加必须严格大于等于 40 秒且小于等于 90 秒。每个 start 必须完全等于某条输入字幕的开始时间，每个 end 必须完全等于某条输入字幕的结束时间；不得创造、修改或估算时间戳。
 
-如果有必要，可以对字幕进行颠倒，优先把与问题大幅相关的字幕提到前面，例如能够直接回答问题的字幕，或者患者提出的与问题大幅相关的字幕
+`ranges` 数组的顺序就是最终短视频和 Markdown 的叙事顺序，绝对不要因为时间戳先后而自动排序。允许跨原视频时间线重组不连续片段，且应采用“结论优先”：优先将能够直接回答问题、给出明确结论、关键风险或行动建议的字幕放在第一个 range；其次才放解释、证据、例外条件或能间接回答问题的重点字幕；最后才补充必要的患者提问、背景或过渡。若原视频后段有更直接的结论，必须把后段时间戳先输出，再输出前段的背景。只有确实需要按原顺序才能理解时，才保持时间顺序。
+
+输出的 ranges 必须已经是你最终决定的叙事顺序。系统会严格保留该顺序，不会替你按时间戳重排。
 
 只返回合法 JSON，不输出 Markdown 或额外文字：
 {"ranges":[{"start":"00:01:02,000","end":"00:01:35,000"}],"answer_summary":"一句话概述医生给出的答案","reason":"该段包含结论、原因和建议"}
@@ -220,8 +225,18 @@ def run_text_question_test(
     if report:
         report("阶段 1/2：已生成 10 个问题，正在逐题寻找 40-90 秒回答素材。", 15)
 
-    completed = []
-    for index, item in enumerate(questions, start=1):
+    try:
+        configured_workers = int(os.environ.get("FUNCLIP_TEXT_ANSWER_WORKERS", DEFAULT_TEXT_ANSWER_WORKERS))
+    except ValueError:
+        configured_workers = DEFAULT_TEXT_ANSWER_WORKERS
+    worker_count = max(1, min(len(questions), max(1, configured_workers)))
+    if report:
+        report(
+            "阶段 2/2：正在并行寻找 10 个问题的 40-90 秒回答（最多 {} 路）。".format(worker_count),
+            15,
+        )
+
+    def answer_question(index: int, item: dict) -> dict:
         last_error = ""
         for attempt in range(1, MAX_ANSWER_ATTEMPTS + 1):
             if report:
@@ -229,7 +244,7 @@ def run_text_question_test(
                     "阶段 2/2：正在为第 {}/10 个问题寻找合规回答（第 {}/{} 次）。".format(
                         index, attempt, MAX_ANSWER_ATTEMPTS
                     ),
-                    15 + round(80 * (index - 1) / QUESTION_COUNT),
+                    15,
                 )
             retry_note = "" if not last_error else "\n上一轮不合规：{}。请重新选择。".format(last_error)
             raw_answer = _call_deepseek(
@@ -243,23 +258,38 @@ def run_text_question_test(
             )
             try:
                 ranges, summary, answer_reason = _ranges(raw_answer, valid_starts, valid_ends)
-                completed.append({
+                return {
                     **item,
                     "ranges": ranges,
                     "duration_ms": sum(_time_to_ms(end) - _time_to_ms(start) for start, end in ranges),
                     "answer_summary": summary,
                     "answer_reason": answer_reason,
                     "answer_srt": build_highlight_srt(srt_text, ranges),
-                })
-                break
+                }
             except TextQuestionTestError as exc:
                 last_error = str(exc)
-        else:
-            raise TextQuestionTestError("第 {} 个问题未找到严格合规的 40-90 秒回答：{}".format(index, last_error))
+        raise TextQuestionTestError("第 {} 个问题未找到严格合规的 40-90 秒回答：{}".format(index, last_error))
+
+    completed: list[dict | None] = [None] * len(questions)
+    completed_count = 0
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="text-answer") as executor:
+        futures = {
+            executor.submit(answer_question, index, item): index - 1
+            for index, item in enumerate(questions, start=1)
+        }
+        for future in as_completed(futures):
+            question_index = futures[future]
+            completed[question_index] = future.result()
+            completed_count += 1
+            if report:
+                report(
+                    "阶段 2/2：已完成 {}/10 个问题的合规回答。".format(completed_count),
+                    15 + round(80 * completed_count / QUESTION_COUNT),
+                )
 
     if report:
         report("阶段 2/2：10 个问题与答案均已完成，正在写入 Markdown。", 96)
-    path, markdown = _write_markdown(source_name, completed, output_dir)
+    path, markdown = _write_markdown(source_name, [item for item in completed if item is not None], output_dir)
     if report:
         report("文本测试完成，Markdown 已生成。", 100)
     return path, markdown
